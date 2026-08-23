@@ -1,0 +1,361 @@
+openapi: 3.0.3
+
+info:
+  title: Adaptive MAS-RCA API
+  description: |
+    Backend API contract for the Adaptive Multi-Agent
+    Root Cause Analysis platform.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+tags:
+  - name: Incidents
+    description: Incident management
+  - name: Diagnosis
+    description: Root cause analysis
+  - name: Feedback
+    description: User feedback
+  - name: Authentication
+    description: Authentication and authorization
+  - name: Dashboard
+    description: Dashboard statistics
+
+paths:
+
+  /incidents:
+    post:
+      tags:
+        - Incidents
+      summary: Create a new incident
+      operationId: createIncident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentCreate'
+      responses:
+        '201':
+          description: Incident created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '400':
+          description: Invalid request
+
+    get:
+      tags:
+        - Incidents
+      summary: Get all incidents
+      operationId: getIncidents
+      responses:
+        '200':
+          description: List of incidents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Incident'
+
+  /incidents/{incident_id}:
+    get:
+      tags:
+        - Incidents
+      summary: Get an incident by ID
+      operationId: getIncident
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        '200':
+          description: Incident details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '404':
+          description: Incident not found
+
+  /diagnose:
+    post:
+      tags:
+        - Diagnosis
+      summary: Perform root cause analysis
+      operationId: diagnoseIncident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiagnosisRequest'
+      responses:
+        '200':
+          description: RCA diagnosis generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiagnosisResponse'
+        '400':
+          description: Invalid diagnosis request
+        '500':
+          description: Diagnosis failed
+
+  /feedback:
+    post:
+      tags:
+        - Feedback
+      summary: Submit feedback for an RCA diagnosis
+      operationId: submitFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
+      responses:
+        '201':
+          description: Feedback submitted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackResponse'
+        '400':
+          description: Invalid feedback
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Authenticate a user
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+
+  /dashboard:
+    get:
+      tags:
+        - Dashboard
+      summary: Get dashboard statistics
+      operationId: getDashboard
+      responses:
+        '200':
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+
+components:
+
+  parameters:
+
+    IncidentId:
+      name: incident_id
+      in: path
+      required: true
+      description: Unique incident identifier
+      schema:
+        type: string
+        example: INC-001
+
+  schemas:
+
+    IncidentCreate:
+      type: object
+      required:
+        - title
+        - description
+        - severity
+      properties:
+        title:
+          type: string
+          example: PostgreSQL connection failure
+        description:
+          type: string
+          example: Backend unable to connect to PostgreSQL
+        severity:
+          type: string
+          enum:
+            - LOW
+            - MEDIUM
+            - HIGH
+            - CRITICAL
+          example: HIGH
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-08-19T10:00:00Z"
+
+    Incident:
+      type: object
+      properties:
+        incident_id:
+          type: string
+          example: INC-001
+        title:
+          type: string
+          example: PostgreSQL connection failure
+        description:
+          type: string
+          example: Backend unable to connect to PostgreSQL
+        severity:
+          type: string
+          enum:
+            - LOW
+            - MEDIUM
+            - HIGH
+            - CRITICAL
+          example: HIGH
+        status:
+          type: string
+          enum:
+            - OPEN
+            - INVESTIGATING
+            - RESOLVED
+          example: RESOLVED
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-08-19T10:00:00Z"
+
+    DiagnosisRequest:
+      type: object
+      required:
+        - incident_id
+      properties:
+        incident_id:
+          type: string
+          example: INC-001
+        logs:
+          type: array
+          items:
+            type: string
+          example:
+            - "ERROR Unable to connect to PostgreSQL"
+            - "ERROR Connection refused at port 5432"
+            - "WARN Database connection retry failed"
+
+    DiagnosisResponse:
+      type: object
+      properties:
+        incident_id:
+          type: string
+          example: INC-001
+        root_cause:
+          type: string
+          example: PostgreSQL connectivity failure
+        category:
+          type: string
+          example: Database
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.95
+        evidence:
+          type: array
+          items:
+            type: string
+          example:
+            - Connection refused at port 5432
+            - Database connection retry failed
+        remediation:
+          type: array
+          items:
+            type: string
+          example:
+            - Check PostgreSQL availability
+            - Verify port 5432 connectivity
+        trace_id:
+          type: string
+          example: trace-001
+
+    FeedbackRequest:
+      type: object
+      required:
+        - incident_id
+        - rating
+      properties:
+        incident_id:
+          type: string
+          example: INC-001
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          example: 5
+        comments:
+          type: string
+          example: Root cause was correctly identified.
+
+    FeedbackResponse:
+      type: object
+      properties:
+        feedback_id:
+          type: string
+          example: FB-001
+        message:
+          type: string
+          example: Feedback submitted successfully
+
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          format: password
+          example: password123
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIs...
+        token_type:
+          type: string
+          example: bearer
+
+    DashboardResponse:
+      type: object
+      properties:
+        total_incidents:
+          type: integer
+          example: 25
+        open_incidents:
+          type: integer
+          example: 5
+        resolved_incidents:
+          type: integer
+          example: 20
+        average_confidence:
+          type: number
+          format: float
+          example: 0.89
+        high_severity_incidents:
+          type: integer
+          example: 8
