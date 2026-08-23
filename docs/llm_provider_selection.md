@@ -1,60 +1,112 @@
 # Subtask 14: LLM Provider Selection
 
-## Selected Provider
+## Selected LLM Provider
 
-Ollama with Llama 3 was selected as the LLM provider
-for the Adaptive MAS-RCA system.
+The selected LLM provider for the Adaptive MAS-RCA
+system is Ollama running the Llama 3 model locally.
 
-## Provider
+## Provider Details
 
-- Provider: Ollama
-- Model: Llama 3
-- Deployment: Local
-- Endpoint: http://localhost:11434
+| Parameter | Value |
+|---|---|
+| Provider | Ollama |
+| Model | Llama 3 |
+| Deployment | Local |
+| API Endpoint | http://localhost:11434 |
+| API Key | Not required |
+| Integration | Python Ollama Client |
 
-## Reason for Selection
+## Provider Selection Rationale
 
-Ollama + Llama was selected because it provides:
+Ollama with Llama 3 was selected for the initial
+implementation of the Adaptive MAS-RCA system because
+the model can run locally without requiring an external
+API key.
 
-- Local LLM execution
-- No external API key requirement
+The main advantages are:
+
+- Local execution
 - No per-request API cost
+- No external API key required
 - Better control over project data
 - Easy Python integration
 - Easy integration with LangGraph
-- Suitable for development and experimentation
+- Suitable for development and testing
 
-## RCA Test
+## RCA Prompt Test
 
-Sample incident:
+A sample PostgreSQL connection failure incident was
+used to evaluate the selected LLM.
 
-INC-001 - PostgreSQL connection failure
+### Incident
 
-The model was tested using PostgreSQL connection
-failure logs.
+Incident ID: INC-001
 
-The test required the model to identify:
+Title: PostgreSQL connection failure
 
-1. Incident
+Severity: HIGH
+
+Description:
+
+Backend unable to connect to PostgreSQL.
+
+### Sample Evidence
+
+- Backend unable to connect to PostgreSQL
+- Connection refused at port 5432
+- Database connection retry failed
+- Maximum connection retries exceeded
+
+## LLM Output
+
+The Llama 3 model successfully produced:
+
+1. Incident identification
 2. Symptoms
 3. Probable root cause
-4. Evidence
-5. Confidence
+4. Supporting evidence
+5. Confidence assessment
 6. Recommended remediation
 
-## Latency
+The model identified possible causes including network
+connectivity, firewall configuration, database
+configuration, and authentication/authorization issues.
 
-The response latency was measured using the Python
-Ollama client.
+## Performance Test
 
-Measured latency: 40.51 seconds
+The Python Ollama client was used to measure response
+latency.
 
-PUT YOUR ACTUAL LATENCY HERE
+### Measured Latency
+
+15.87 seconds
+
+The latency includes the time required for the local
+Llama 3 model to process the RCA prompt and generate
+the response.
 
 ## Final Decision
 
-Ollama + Llama 3 is selected as the final LLM provider
-for the Adaptive MAS-RCA project.
+Ollama + Llama 3 has been selected as the LLM provider
+for the Adaptive MAS-RCA prototype.
 
-The provider will be integrated with the LangGraph
-agent architecture.
+The provider is successfully installed, accessible
+through the local Ollama API, and tested using a sample
+RCA scenario.
+
+## Integration Status
+
+- Ollama installed: Complete
+- Llama 3 model available: Complete
+- Python integration: Complete
+- RCA prompt test: Complete
+- Latency measurement: Complete
+- Provider documentation: Complete
+
+## Future Consideration
+
+For production deployment, other providers such as
+OpenAI GPT models or Llama models served through
+vLLM can be evaluated based on latency, cost,
+context-window requirements, accuracy, privacy, and
+infrastructure requirements.

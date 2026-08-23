@@ -5,11 +5,14 @@ prompt = """
 You are an RCA assistant for an Adaptive Multi-Agent
 Root Cause Analysis system.
 
-Analyze this incident:
+Analyze the following incident.
 
 Incident ID: INC-001
 Title: PostgreSQL connection failure
-Description: Backend unable to connect to PostgreSQL.
+Severity: HIGH
+
+Description:
+Backend unable to connect to PostgreSQL.
 
 Logs:
 2026-08-19 10:00:01 ERROR Backend
