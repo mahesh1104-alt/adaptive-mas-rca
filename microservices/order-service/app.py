@@ -1,13 +1,79 @@
 from flask import Flask, jsonify
+
 from prometheus_flask_exporter import PrometheusMetrics
+
 import requests
 import os
 import logging
 import json
+
 from datetime import datetime, timezone
 
+# ==========================================
+# OPENTELEMETRY
+# ==========================================
+
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+    OTLPSpanExporter
+)
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
+
+# ==========================================
+# FLASK APP
+# ==========================================
+
 app = Flask(__name__)
+
+# Prometheus metrics
 metrics = PrometheusMetrics(app)
+
+
+# ==========================================
+# OPENTELEMETRY CONFIGURATION
+# ==========================================
+
+resource = Resource.create({
+    "service.name": os.getenv(
+        "OTEL_SERVICE_NAME",
+        "order-service"
+    )
+})
+
+trace_provider = TracerProvider(
+    resource=resource
+)
+
+otlp_exporter = OTLPSpanExporter(
+    endpoint=os.getenv(
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "http://jaeger:4317"
+    ),
+    insecure=True
+)
+
+trace_provider.add_span_processor(
+    BatchSpanProcessor(otlp_exporter)
+)
+
+trace.set_tracer_provider(trace_provider)
+
+# Instrument incoming Flask requests
+FlaskInstrumentor().instrument_app(app)
+
+# Instrument outgoing HTTP requests
+RequestsInstrumentor().instrument()
+
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+
 PAYMENT_URL = os.getenv(
     "PAYMENT_URL",
     "http://localhost:8002"
@@ -18,15 +84,20 @@ PAYMENT_URL = os.getenv(
 # JSON LOGGER
 # ==========================================
 
-# Create the logs directory inside the container
-os.makedirs("/logs", exist_ok=True)
+os.makedirs(
+    "/logs",
+    exist_ok=True
+)
 
 
 class JSONFormatter(logging.Formatter):
 
     def format(self, record):
+
         log = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(
+                timezone.utc
+            ).isoformat(),
             "service": "order-service",
             "level": record.levelname,
             "message": record.getMessage()
@@ -35,7 +106,10 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log)
 
 
-logger = logging.getLogger("order-service")
+logger = logging.getLogger(
+    "order-service"
+)
+
 logger.setLevel(logging.INFO)
 
 # Prevent duplicate handlers
@@ -45,7 +119,9 @@ if not logger.handlers:
         "/logs/order-service.jsonl"
     )
 
-    handler.setFormatter(JSONFormatter())
+    handler.setFormatter(
+        JSONFormatter()
+    )
 
     logger.addHandler(handler)
 
@@ -57,7 +133,9 @@ if not logger.handlers:
 @app.route("/health")
 def health():
 
-    logger.info("Health check requested")
+    logger.info(
+        "Health check requested"
+    )
 
     return jsonify({
         "service": "order-service",

@@ -1,163 +1,261 @@
 services:
-  # =========================
-  # Existing Backend
-  # =========================  
+
+  # =========================================================
+  # Prometheus - Metrics Collection
+  # =========================================================
   prometheus:
     image: prom/prometheus:latest
     container_name: adaptive-mas-rca-prometheus
+
     ports:
       - "9090:9090"
+
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
     depends_on:
       - order-service
       - payment-service
       - inventory-service
+
     restart: unless-stopped
 
+
+  # =========================================================
+  # Jaeger - Distributed Tracing
+  # Subtask 19
+  # =========================================================
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: adaptive-mas-rca-jaeger
+
+    ports:
+      # Jaeger UI
+      - "16686:16686"
+
+      # OTLP gRPC
+      - "4317:4317"
+
+      # OTLP HTTP
+      - "4318:4318"
+
+    restart: unless-stopped
+
+
+  # =========================================================
+  # Existing Backend
+  # =========================================================
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+
     container_name: adaptive-mas-rca-backend
+
     ports:
       - "8000:8000"
+
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+
       NEO4J_HOST: neo4j
       NEO4J_PORT: 7687
       NEO4J_USER: ${NEO4J_USER}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+
     depends_on:
       - postgres
       - neo4j
+
     restart: unless-stopped
 
-  # =========================
+
+  # =========================================================
   # Existing Frontend
-  # =========================
+  # =========================================================
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+
     container_name: adaptive-mas-rca-frontend
+
     ports:
       - "5173:80"
+
     depends_on:
       - backend
+
     restart: unless-stopped
 
-  # =========================
-  # Existing PostgreSQL
-  # =========================
+
+  # =========================================================
+  # PostgreSQL
+  # =========================================================
   postgres:
     image: postgres:16-alpine
+
     container_name: adaptive-mas-rca-postgres
+
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+
     ports:
       - "${POSTGRES_PORT}:5432"
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
     restart: unless-stopped
 
-  # =========================
-  # Existing Neo4j
-  # =========================
+
+  # =========================================================
+  # Neo4j
+  # =========================================================
   neo4j:
     image: neo4j:2026.06.0
+
     container_name: adaptive-mas-rca-neo4j
+
     environment:
       NEO4J_AUTH: "${NEO4J_USER}/${NEO4J_PASSWORD}"
+
     ports:
       - "7474:7474"
       - "7687:7687"
+
     volumes:
       - neo4j_data:/data
+
     restart: unless-stopped
 
-  # ==================================================
-  # Subtask 16 - Sample Microservice Test Environment
-  # ==================================================
 
-  # =========================
+  # =========================================================
+  # Subtask 16
   # Order Service
-  # =========================
+  # =========================================================
   order-service:
     build:
       context: ./microservices
       dockerfile: order-service/Dockerfile
+
     container_name: order-service
+
     ports:
       - "8001:8001"
+
     environment:
       PAYMENT_URL: http://payment-service:8002
+
+      # OpenTelemetry
+      OTEL_SERVICE_NAME: order-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+
     depends_on:
       - payment-service
+      - jaeger
+
     volumes:
       - ./logs:/logs
+
     restart: unless-stopped
 
-  # =========================
+
+  # =========================================================
+  # Subtask 16
   # Payment Service
-  # =========================
+  # =========================================================
   payment-service:
     build:
       context: ./microservices
       dockerfile: payment-service/Dockerfile
+
     container_name: payment-service
+
     ports:
       - "8002:8002"
+
     environment:
       INVENTORY_URL: http://inventory-service:8003
+
       FAIL_MODE: "false"
+
+      # OpenTelemetry
+      OTEL_SERVICE_NAME: payment-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+
     depends_on:
       - inventory-service
+      - jaeger
+
     volumes:
       - ./logs:/logs
+
     restart: unless-stopped
 
-  # =========================
+
+  # =========================================================
+  # Subtask 16
   # Inventory Service
-  # =========================
+  # =========================================================
   inventory-service:
     build:
       context: ./microservices
       dockerfile: inventory-service/Dockerfile
+
     container_name: inventory-service
+
     ports:
       - "8003:8003"
+
     environment:
       FAIL_MODE: "false"
+
+      # OpenTelemetry
+      OTEL_SERVICE_NAME: inventory-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+
+    depends_on:
+      - jaeger
+
     volumes:
       - ./logs:/logs
+
     restart: unless-stopped
-  # =========================
-  # Subtask 17 - Log Collector
-  # =========================
+
+
+  # =========================================================
+  # Subtask 17
+  # Log Collector
+  # =========================================================
   log-collector:
     build:
       context: ./log-collector
       dockerfile: Dockerfile
+
     container_name: adaptive-mas-rca-log-collector
+
     ports:
       - "8010:8010"
+
     volumes:
       - ./logs:/logs:ro
+
     environment:
       LOG_DIR: /logs
+
     restart: unless-stopped
 
 
-# =========================
+# =========================================================
 # Persistent Volumes
-# =========================
+# =========================================================
 volumes:
   postgres_data:
   neo4j_data:
