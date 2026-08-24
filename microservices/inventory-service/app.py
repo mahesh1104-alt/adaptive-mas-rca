@@ -1,6 +1,9 @@
 from flask import Flask, jsonify
 import os
 import time
+import logging
+import json
+from datetime import datetime, timezone
 
 app = Flask(__name__)
 
@@ -10,27 +13,74 @@ FAIL_MODE = os.getenv(
 ).lower() == "true"
 
 
+# ==========================================
+# JSON LOGGER
+# ==========================================
+
+os.makedirs("/logs", exist_ok=True)
+
+
+class JSONFormatter(logging.Formatter):
+
+    def format(self, record):
+        log = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "service": "inventory-service",
+            "level": record.levelname,
+            "message": record.getMessage()
+        }
+
+        return json.dumps(log)
+
+
+logger = logging.getLogger("inventory-service")
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+
+    handler = logging.FileHandler(
+        "/logs/inventory-service.jsonl"
+    )
+
+    handler.setFormatter(JSONFormatter())
+
+    logger.addHandler(handler)
+
+
+# ==========================================
+# HEALTH CHECK
+# ==========================================
+
 @app.route("/health")
 def health():
+
+    logger.info("Health check requested")
+
     return jsonify({
         "service": "inventory-service",
         "status": "healthy"
     })
 
 
+# ==========================================
+# CHECK INVENTORY
+# ==========================================
+
 @app.route("/check/<order_id>")
 def check_inventory(order_id):
 
-    print(
-        f"[INVENTORY] Checking inventory "
-        f"for {order_id}"
+    logger.info(
+        f"Checking inventory for {order_id}"
     )
+
+    # ------------------------------------------
+    # SIMULATED FAILURE
+    # ------------------------------------------
 
     if FAIL_MODE:
 
-        print(
-            "[INVENTORY][ERROR] "
-            "Simulated inventory timeout"
+        logger.error(
+            f"Simulated inventory timeout for {order_id}"
         )
 
         time.sleep(10)
@@ -39,6 +89,14 @@ def check_inventory(order_id):
             "status": "timeout"
         }), 504
 
+    # ------------------------------------------
+    # NORMAL RESPONSE
+    # ------------------------------------------
+
+    logger.info(
+        f"Inventory available for {order_id}"
+    )
+
     return jsonify({
         "status": "available",
         "order_id": order_id,
@@ -46,7 +104,12 @@ def check_inventory(order_id):
     })
 
 
+# ==========================================
+# START SERVER
+# ==========================================
+
 if __name__ == "__main__":
+
     app.run(
         host="0.0.0.0",
         port=8003

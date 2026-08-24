@@ -87,6 +87,8 @@ services:
       PAYMENT_URL: http://payment-service:8002
     depends_on:
       - payment-service
+    volumes:
+      - ./logs:/logs
     restart: unless-stopped
 
   # =========================
@@ -104,6 +106,8 @@ services:
       FAIL_MODE: "false"
     depends_on:
       - inventory-service
+    volumes:
+      - ./logs:/logs
     restart: unless-stopped
 
   # =========================
@@ -118,6 +122,8 @@ services:
       - "8003:8003"
     environment:
       FAIL_MODE: "false"
+    volumes:
+      - ./logs:/logs
     restart: unless-stopped
 
 

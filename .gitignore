@@ -1,27 +1,6 @@
-# Python
+backend/venv/
 __pycache__/
-*.py[cod]
-.venv/
-venv/
-env/
-
-# Environment variables
+*.pyc
 .env
-.env.*
-!.env.example
-
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# VS Code
-.vscode/
-
-# Logs
-*.log
-
-# OS files
-.DS_Store
-Thumbs.db
+logs/*.jsonl
+logs/rca_result.txt
