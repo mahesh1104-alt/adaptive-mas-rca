@@ -1,4 +1,5 @@
 from flask import Flask, jsonify
+from prometheus_flask_exporter import PrometheusMetrics
 import os
 import time
 import logging
@@ -6,6 +7,8 @@ import json
 from datetime import datetime, timezone
 
 app = Flask(__name__)
+
+metrics = PrometheusMetrics(app)
 
 FAIL_MODE = os.getenv(
     "FAIL_MODE",

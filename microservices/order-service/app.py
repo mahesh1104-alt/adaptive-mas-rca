@@ -1,4 +1,5 @@
 from flask import Flask, jsonify
+from prometheus_flask_exporter import PrometheusMetrics
 import requests
 import os
 import logging
@@ -6,7 +7,7 @@ import json
 from datetime import datetime, timezone
 
 app = Flask(__name__)
-
+metrics = PrometheusMetrics(app)
 PAYMENT_URL = os.getenv(
     "PAYMENT_URL",
     "http://localhost:8002"

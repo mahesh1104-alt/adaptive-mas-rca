@@ -1,7 +1,20 @@
 services:
   # =========================
   # Existing Backend
-  # =========================
+  # =========================  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: adaptive-mas-rca-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - order-service
+      - payment-service
+      - inventory-service
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
