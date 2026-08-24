@@ -125,6 +125,21 @@ services:
     volumes:
       - ./logs:/logs
     restart: unless-stopped
+  # =========================
+  # Subtask 17 - Log Collector
+  # =========================
+  log-collector:
+    build:
+      context: ./log-collector
+      dockerfile: Dockerfile
+    container_name: adaptive-mas-rca-log-collector
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./logs:/logs:ro
+    environment:
+      LOG_DIR: /logs
+    restart: unless-stopped
 
 
 # =========================
