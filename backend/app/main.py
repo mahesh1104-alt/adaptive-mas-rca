@@ -1,14 +1,18 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 import os
 import json
 import time
-import hashlib
-
+import base64
+import urllib.request
+import urllib.parse
+import urllib.error
+import requests
 import ollama
 import psycopg2
-
 from psycopg2.extras import Json, RealDictCursor
+from app.repository_connector import RepositoryConnector
 
+repository_connector = RepositoryConnector()
 
 app = FastAPI(title="Adaptive MAS RCA API")
 
@@ -69,7 +73,204 @@ POSTGRES_DB = os.getenv(
 
 
 # ============================================================
-# DATABASE CONNECTION
+# GITHUB CONFIGURATION
+# ============================================================
+
+GITHUB_API_URL = os.getenv(
+    "GITHUB_API_URL",
+    "https://api.github.com"
+)
+
+GITHUB_OWNER = os.getenv(
+    "GITHUB_OWNER",
+    "mahesh1104-alt"
+)
+
+GITHUB_REPO = os.getenv(
+    "GITHUB_REPO",
+    "adaptive-mas-rca"
+)
+
+GITHUB_BRANCH = os.getenv(
+    "GITHUB_BRANCH",
+    "develop"
+)
+
+GITHUB_TOKEN = os.getenv(
+    "GITHUB_TOKEN",
+    ""
+)
+
+
+# ============================================================
+# REPOSITORY SERVICE MAPPING
+# ============================================================
+#
+# Subtask 21 requirement:
+# Map service names to repository paths.
+#
+# If config/repository_config.json exists, it will be loaded.
+# Otherwise these defaults are used.
+#
+# ============================================================
+
+DEFAULT_REPOSITORY_MAPPING = {
+    "inventory-service": {
+        "repository": "mahesh1104-alt/adaptive-mas-rca",
+        "path": "microservices/inventory-service"
+    },
+
+    "order-service": {
+        "repository": "mahesh1104-alt/adaptive-mas-rca",
+        "path": "microservices/order-service"
+    },
+
+    "payment-service": {
+        "repository": "mahesh1104-alt/adaptive-mas-rca",
+        "path": "microservices/payment-service"
+    },
+
+    "log-collector": {
+        "repository": "mahesh1104-alt/adaptive-mas-rca",
+        "path": "log-collector"
+    },
+
+    "backend": {
+        "repository": "mahesh1104-alt/adaptive-mas-rca",
+        "path": "backend"
+    },
+
+    "frontend": {
+        "repository": "mahesh1104-alt/adaptive-mas-rca",
+        "path": "frontend"
+    }
+}
+
+
+REPOSITORY_CONFIG_FILE = os.path.join(
+    BASE_DIR,
+    "config",
+    "repository_config.json"
+)
+
+
+def load_repository_mapping():
+
+    mapping = DEFAULT_REPOSITORY_MAPPING.copy()
+
+    if not os.path.exists(
+        REPOSITORY_CONFIG_FILE
+    ):
+        return mapping
+
+    try:
+
+        with open(
+            REPOSITORY_CONFIG_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            custom_mapping = json.load(file)
+
+        if isinstance(
+            custom_mapping,
+            dict
+        ):
+
+            mapping.update(
+                custom_mapping
+            )
+
+        print(
+            "Repository configuration loaded."
+        )
+
+    except Exception as e:
+
+        print(
+            f"Could not load repository configuration: {e}"
+        )
+
+    return mapping
+
+
+REPOSITORY_MAPPING = load_repository_mapping()
+
+
+# ============================================================
+# LOCAL REPOSITORY CACHE
+# ============================================================
+#
+# Cache prevents repeated GitHub network calls.
+#
+# Cache structure:
+#
+# {
+#     "cache-key": {
+#         "timestamp": ...,
+#         "data": ...
+#     }
+# }
+#
+# ============================================================
+
+REPOSITORY_CACHE = {}
+
+CACHE_TTL = int(
+    os.getenv(
+        "REPOSITORY_CACHE_TTL",
+        "300"
+    )
+)
+
+
+def get_cached(
+    key
+):
+
+    entry = REPOSITORY_CACHE.get(
+        key
+    )
+
+    if not entry:
+        return None
+
+    age = (
+        time.time()
+        - entry["timestamp"]
+    )
+
+    if age > CACHE_TTL:
+
+        REPOSITORY_CACHE.pop(
+            key,
+            None
+        )
+
+        return None
+
+    return entry["data"]
+
+
+def set_cached(
+    key,
+    data
+):
+
+    REPOSITORY_CACHE[key] = {
+        "timestamp": time.time(),
+        "data": data
+    }
+
+
+def clear_repository_cache():
+
+    REPOSITORY_CACHE.clear()
+
+
+# ============================================================
+# POSTGRESQL CONNECTION
 # ============================================================
 
 def get_db_connection():
@@ -105,10 +306,6 @@ def initialize_database():
 
             cursor = connection.cursor()
 
-            # ------------------------------------------------
-            # Create alerts table
-            # ------------------------------------------------
-
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS alerts (
@@ -139,13 +336,13 @@ def initialize_database():
                     raw_payload JSONB,
 
                     received_at TIMESTAMPTZ
-                        DEFAULT CURRENT_TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP
                 );
                 """
             )
 
             # ------------------------------------------------
-            # Migration for older database
+            # Migration for an older alerts table
             # ------------------------------------------------
 
             cursor.execute(
@@ -172,10 +369,6 @@ def initialize_database():
                 """
             )
 
-            # ------------------------------------------------
-            # Index fingerprint for faster lookup
-            # ------------------------------------------------
-
             cursor.execute(
                 """
                 CREATE INDEX IF NOT EXISTS
@@ -199,19 +392,9 @@ def initialize_database():
                 f"{attempt}/{max_retries} failed: {e}"
             )
 
-            if connection:
-                connection.rollback()
-
             if attempt < max_retries:
 
                 time.sleep(3)
-
-            else:
-
-                print(
-                    "Could not initialize PostgreSQL "
-                    "after multiple attempts."
-                )
 
         finally:
 
@@ -221,9 +404,14 @@ def initialize_database():
             if connection:
                 connection.close()
 
+    print(
+        "Could not initialize PostgreSQL "
+        "after multiple attempts."
+    )
+
 
 # ============================================================
-# APPLICATION STARTUP
+# STARTUP
 # ============================================================
 
 @app.on_event("startup")
@@ -314,36 +502,28 @@ def read_logs():
         ):
             continue
 
-        try:
+        with open(
+            log_file,
+            "r",
+            encoding="utf-8"
+        ) as file:
 
-            with open(
-                log_file,
-                "r",
-                encoding="utf-8"
-            ) as file:
+            for line in file:
 
-                for line in file:
+                line = line.strip()
 
-                    line = line.strip()
+                if not line:
+                    continue
 
-                    if not line:
-                        continue
+                try:
 
-                    try:
+                    events.append(
+                        json.loads(line)
+                    )
 
-                        events.append(
-                            json.loads(line)
-                        )
+                except json.JSONDecodeError:
 
-                    except json.JSONDecodeError:
-
-                        continue
-
-        except Exception as e:
-
-            print(
-                f"Error reading {log_file}: {e}"
-            )
+                    continue
 
     return events
 
@@ -352,7 +532,9 @@ def read_logs():
 # RCA ANALYSIS
 # ============================================================
 
-def analyze_with_llama(events):
+def analyze_with_llama(
+    events
+):
 
     log_text = "\n".join(
         json.dumps(event)
@@ -388,10 +570,7 @@ IMPORTANT RCA RULES:
 
 8. Do not invent evidence.
 
-9. Alertmanager alerts should be treated as incident
-   signals and not automatically as the root cause.
-
-Return exactly these sections:
+Return these sections:
 
 1. Incident
 2. Failure Symptoms
@@ -453,10 +632,6 @@ def run_rca():
             detail=f"RCA analysis failed: {str(e)}"
         )
 
-    # --------------------------------------------------------
-    # Save RCA result
-    # --------------------------------------------------------
-
     os.makedirs(
         LOG_DIR,
         exist_ok=True
@@ -484,41 +659,6 @@ def run_rca():
 
 
 # ============================================================
-# GENERATE FALLBACK FINGERPRINT
-# ============================================================
-
-def generate_fingerprint(
-    alert_name,
-    labels
-):
-
-    """
-    Alertmanager normally provides a fingerprint.
-
-    If fingerprint is missing, generate a deterministic
-    fingerprint from alertname + sorted labels.
-
-    This prevents duplicate rows for the same alert.
-    """
-
-    fingerprint_data = {
-        "alertname": alert_name,
-        "labels": labels
-    }
-
-    fingerprint_string = json.dumps(
-        fingerprint_data,
-        sort_keys=True
-    )
-
-    return hashlib.sha256(
-        fingerprint_string.encode(
-            "utf-8"
-        )
-    ).hexdigest()
-
-
-# ============================================================
 # ALERTMANAGER WEBHOOK
 # ============================================================
 
@@ -526,10 +666,6 @@ def generate_fingerprint(
 async def alertmanager_webhook(
     request: Request
 ):
-
-    # --------------------------------------------------------
-    # Read JSON
-    # --------------------------------------------------------
 
     try:
 
@@ -541,10 +677,6 @@ async def alertmanager_webhook(
             status_code=400,
             detail="Invalid JSON payload"
         )
-
-    # --------------------------------------------------------
-    # Extract alerts
-    # --------------------------------------------------------
 
     alerts = payload.get(
         "alerts",
@@ -575,105 +707,50 @@ async def alertmanager_webhook(
 
         cursor = connection.cursor()
 
-        # ----------------------------------------------------
-        # Process every alert
-        # ----------------------------------------------------
-
         for alert in alerts:
-
-            if not isinstance(
-                alert,
-                dict
-            ):
-                continue
-
-            # ------------------------------------------------
-            # Labels
-            # ------------------------------------------------
 
             labels = alert.get(
                 "labels",
                 {}
             )
 
-            if not isinstance(
-                labels,
-                dict
-            ):
-                labels = {}
-
-            # ------------------------------------------------
-            # Annotations
-            # ------------------------------------------------
-
             annotations = alert.get(
                 "annotations",
                 {}
             )
-
-            if not isinstance(
-                annotations,
-                dict
-            ):
-                annotations = {}
-
-            # ------------------------------------------------
-            # Alert name
-            # ------------------------------------------------
 
             alert_name = labels.get(
                 "alertname",
                 "unknown"
             )
 
-            # ------------------------------------------------
-            # Service
-            # ------------------------------------------------
-
             service = labels.get(
-                "service"
+                "service",
+                labels.get(
+                    "job",
+                    labels.get(
+                        "instance",
+                        "unknown"
+                    )
+                )
             )
-
-            if not service:
-
-                service = labels.get(
-                    "job"
-                )
-
-            if not service:
-
-                service = labels.get(
-                    "instance",
-                    "unknown"
-                )
-
-            # ------------------------------------------------
-            # Status
-            # ------------------------------------------------
 
             status = alert.get(
-                "status"
-            )
-
-            if not status:
-
-                status = payload.get(
+                "status",
+                payload.get(
                     "status",
                     "unknown"
                 )
-
-            # ------------------------------------------------
-            # Severity
-            # ------------------------------------------------
+            )
 
             severity = labels.get(
                 "severity",
                 "unknown"
             )
 
-            # ------------------------------------------------
-            # Timestamps
-            # ------------------------------------------------
+            fingerprint = alert.get(
+                "fingerprint"
+            )
 
             starts_at = alert.get(
                 "startsAt"
@@ -683,18 +760,10 @@ async def alertmanager_webhook(
                 "endsAt"
             )
 
-            # ------------------------------------------------
-            # Summary
-            # ------------------------------------------------
-
             summary = annotations.get(
                 "summary",
                 ""
             )
-
-            # ------------------------------------------------
-            # Description
-            # ------------------------------------------------
 
             description = annotations.get(
                 "description",
@@ -702,52 +771,35 @@ async def alertmanager_webhook(
             )
 
             # ------------------------------------------------
-            # Fingerprint
+            # If fingerprint exists, update existing alert.
+            # This prevents duplicate rows when an alert
+            # changes from firing -> resolved.
             # ------------------------------------------------
 
-            fingerprint = alert.get(
-                "fingerprint"
-            )
+            if fingerprint:
 
-            # If Alertmanager didn't provide one,
-            # generate our own stable fingerprint.
-            if not fingerprint:
-
-                fingerprint = generate_fingerprint(
-                    alert_name,
-                    labels
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM alerts
+                    WHERE fingerprint = %s
+                    ORDER BY id DESC
+                    LIMIT 1;
+                    """,
+                    (
+                        fingerprint,
+                    )
                 )
 
-            # ------------------------------------------------
-            # Check whether alert already exists
-            # ------------------------------------------------
+                existing = cursor.fetchone()
 
-            cursor.execute(
-                """
-                SELECT id
-                FROM alerts
-                WHERE fingerprint = %s
-                ORDER BY id DESC
-                LIMIT 1;
-                """,
-                (
-                    fingerprint,
-                )
-            )
+            else:
 
-            existing_alert = cursor.fetchone()
+                existing = None
 
-            # =================================================
-            # EXISTING ALERT
-            # =================================================
+            if existing:
 
-            if existing_alert:
-
-                alert_id = existing_alert[0]
-
-                # ---------------------------------------------
-                # Update existing alert
-                # ---------------------------------------------
+                alert_id = existing[0]
 
                 cursor.execute(
                     """
@@ -764,9 +816,9 @@ async def alertmanager_webhook(
                         labels = %s,
                         annotations = %s,
                         raw_payload = %s,
-                        received_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                    RETURNING id;
+                        received_at =
+                            CURRENT_TIMESTAMP
+                    WHERE id = %s;
                     """,
                     (
                         alert_name,
@@ -784,23 +836,7 @@ async def alertmanager_webhook(
                     )
                 )
 
-                updated_id = cursor.fetchone()[0]
-
-                stored_alerts.append(
-                    {
-                        "id": updated_id,
-                        "fingerprint": fingerprint,
-                        "alert_name": alert_name,
-                        "status": status,
-                        "service": service,
-                        "severity": severity,
-                        "action": "updated"
-                    }
-                )
-
-            # =================================================
-            # NEW ALERT
-            # =================================================
+                operation = "updated"
 
             else:
 
@@ -854,21 +890,19 @@ async def alertmanager_webhook(
 
                 alert_id = cursor.fetchone()[0]
 
-                stored_alerts.append(
-                    {
-                        "id": alert_id,
-                        "fingerprint": fingerprint,
-                        "alert_name": alert_name,
-                        "status": status,
-                        "service": service,
-                        "severity": severity,
-                        "action": "created"
-                    }
-                )
+                operation = "created"
 
-        # ----------------------------------------------------
-        # Commit transaction
-        # ----------------------------------------------------
+            stored_alerts.append(
+                {
+                    "id": alert_id,
+                    "fingerprint": fingerprint,
+                    "alert_name": alert_name,
+                    "status": status,
+                    "service": service,
+                    "severity": severity,
+                    "operation": operation
+                }
+            )
 
         connection.commit()
 
@@ -890,10 +924,6 @@ async def alertmanager_webhook(
         if connection:
             connection.close()
 
-    # --------------------------------------------------------
-    # Response
-    # --------------------------------------------------------
-
     return {
         "status": "success",
         "message": "Alertmanager payload received",
@@ -903,7 +933,7 @@ async def alertmanager_webhook(
 
 
 # ============================================================
-# GET ALL STORED ALERTS
+# GET STORED ALERTS
 # ============================================================
 
 @app.get("/api/alerts")
@@ -1088,6 +1118,740 @@ def delete_alerts():
             connection.close()
 
 
+# ============================================================
+# ============================================================
+# SUBTASK 21
+# SOURCE CODE REPOSITORY CONNECTOR
+# ============================================================
+#
+# Features:
+#
+# 1. Map service -> repository path
+# 2. Retrieve repository files
+# 3. Retrieve a specific source file
+# 4. Retrieve latest 5 commits
+# 5. Local caching
+#
+# ============================================================
+
+
+# ============================================================
+# GITHUB HTTP HELPER
+# ============================================================
+
+def github_request(
+    endpoint
+):
+
+    url = (
+        GITHUB_API_URL.rstrip("/")
+        + "/"
+        + endpoint.lstrip("/")
+    )
+
+    headers = {
+        "Accept": (
+            "application/vnd.github+json"
+        ),
+        "User-Agent": (
+            "Adaptive-MAS-RCA"
+        ),
+        "X-GitHub-Api-Version": (
+            "2022-11-28"
+        )
+    }
+
+    if GITHUB_TOKEN:
+
+        headers[
+            "Authorization"
+        ] = (
+            f"Bearer {GITHUB_TOKEN}"
+        )
+
+    request = urllib.request.Request(
+        url,
+        headers=headers,
+        method="GET"
+    )
+
+    try:
+
+        with urllib.request.urlopen(
+            request,
+            timeout=15
+        ) as response:
+
+            body = response.read()
+
+            return json.loads(
+                body.decode("utf-8")
+            )
+
+    except urllib.error.HTTPError as e:
+
+        error_body = ""
+
+        try:
+
+            error_body = e.read().decode(
+                "utf-8"
+            )
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=e.code,
+            detail=(
+                f"GitHub API error: "
+                f"{error_body}"
+            )
+        )
+
+    except urllib.error.URLError as e:
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Unable to connect to GitHub: "
+                f"{str(e)}"
+            )
+        )
+
+
+# ============================================================
+# GET SERVICE REPOSITORY CONFIG
+# ============================================================
+
+def get_service_repository(
+    service_name
+):
+
+    config = REPOSITORY_MAPPING.get(
+        service_name
+    )
+
+    if not config:
+
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No repository mapping found "
+                f"for service '{service_name}'"
+            )
+        )
+
+    repository = config.get(
+        "repository"
+    )
+
+    path = config.get(
+        "path",
+        ""
+    )
+
+    if not repository:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Invalid repository configuration "
+                f"for service '{service_name}'"
+            )
+        )
+
+    return {
+        "service": service_name,
+        "repository": repository,
+        "path": path
+    }
+
+
+# ============================================================
+# GET REPOSITORY FILE TREE
+# ============================================================
+
+def fetch_repository_files(
+    repository,
+    path,
+    branch
+):
+
+    cache_key = (
+        f"files:{repository}:"
+        f"{path}:{branch}"
+    )
+
+    cached = get_cached(
+        cache_key
+    )
+
+    if cached is not None:
+
+        return cached
+
+    encoded_path = urllib.parse.quote(
+        path.strip("/"),
+        safe="/"
+    )
+
+    endpoint = (
+        f"repos/{repository}/contents/"
+        f"{encoded_path}"
+        f"?ref={urllib.parse.quote(branch)}"
+    )
+
+    data = github_request(
+        endpoint
+    )
+
+    files = []
+
+    # --------------------------------------------------------
+    # Directory response
+    # --------------------------------------------------------
+
+    if isinstance(
+        data,
+        list
+    ):
+
+        for item in data:
+
+            files.append(
+                {
+                    "name": item.get(
+                        "name"
+                    ),
+                    "path": item.get(
+                        "path"
+                    ),
+                    "type": item.get(
+                        "type"
+                    ),
+                    "size": item.get(
+                        "size"
+                    ),
+                    "url": item.get(
+                        "html_url"
+                    )
+                }
+            )
+
+    # --------------------------------------------------------
+    # Single file response
+    # --------------------------------------------------------
+
+    elif isinstance(
+        data,
+        dict
+    ):
+
+        files.append(
+            {
+                "name": data.get(
+                    "name"
+                ),
+                "path": data.get(
+                    "path"
+                ),
+                "type": data.get(
+                    "type"
+                ),
+                "size": data.get(
+                    "size"
+                ),
+                "url": data.get(
+                    "html_url"
+                )
+            }
+        )
+
+    set_cached(
+        cache_key,
+        files
+    )
+
+    return files
+
+
+# ============================================================
+# GET SOURCE FILE
+# ============================================================
+
+def fetch_source_file(
+    repository,
+    file_path,
+    branch
+):
+
+    cache_key = (
+        f"file:{repository}:"
+        f"{file_path}:{branch}"
+    )
+
+    cached = get_cached(
+        cache_key
+    )
+
+    if cached is not None:
+
+        return cached
+
+    encoded_path = urllib.parse.quote(
+        file_path.strip("/"),
+        safe="/"
+    )
+
+    endpoint = (
+        f"repos/{repository}/contents/"
+        f"{encoded_path}"
+        f"?ref={urllib.parse.quote(branch)}"
+    )
+
+    data = github_request(
+        endpoint
+    )
+
+    if not isinstance(
+        data,
+        dict
+    ):
+
+        raise HTTPException(
+            status_code=404,
+            detail="Source file not found"
+        )
+
+    if data.get(
+        "type"
+    ) != "file":
+
+        raise HTTPException(
+            status_code=400,
+            detail="Requested path is not a file"
+        )
+
+    encoded_content = data.get(
+        "content",
+        ""
+    )
+
+    try:
+
+        content = base64.b64decode(
+            encoded_content
+        ).decode(
+            "utf-8"
+        )
+
+    except UnicodeDecodeError:
+
+        content = base64.b64decode(
+            encoded_content
+        ).decode(
+            "utf-8",
+            errors="replace"
+        )
+
+    result = {
+        "name": data.get(
+            "name"
+        ),
+        "path": data.get(
+            "path"
+        ),
+        "size": data.get(
+            "size"
+        ),
+        "sha": data.get(
+            "sha"
+        ),
+        "html_url": data.get(
+            "html_url"
+        ),
+        "content": content
+    }
+
+    set_cached(
+        cache_key,
+        result
+    )
+
+    return result
+
+
+# ============================================================
+# GET RECENT COMMITS
+# ============================================================
+
+def fetch_recent_commits(
+    repository,
+    path,
+    branch,
+    limit=5
+):
+
+    limit = min(
+        max(
+            int(limit),
+            1
+        ),
+        20
+    )
+
+    cache_key = (
+        f"commits:{repository}:"
+        f"{path}:{branch}:{limit}"
+    )
+
+    cached = get_cached(
+        cache_key
+    )
+
+    if cached is not None:
+
+        return cached
+
+    params = urllib.parse.urlencode(
+        {
+            "sha": branch,
+            "path": path,
+            "per_page": limit
+        }
+    )
+
+    endpoint = (
+        f"repos/{repository}/commits"
+        f"?{params}"
+    )
+
+    data = github_request(
+        endpoint
+    )
+
+    commits = []
+
+    if isinstance(
+        data,
+        list
+    ):
+
+        for commit in data:
+
+            commit_info = commit.get(
+                "commit",
+                {}
+            )
+
+            author_info = commit_info.get(
+                "author",
+                {}
+            )
+
+            commits.append(
+                {
+                    "sha": commit.get(
+                        "sha"
+                    ),
+                    "message": commit_info.get(
+                        "message"
+                    ),
+                    "author": author_info.get(
+                        "name"
+                    ),
+                    "date": author_info.get(
+                        "date"
+                    ),
+                    "html_url": commit.get(
+                        "html_url"
+                    )
+                }
+            )
+
+    set_cached(
+        cache_key,
+        commits
+    )
+
+    return commits
+
+
+# ============================================================
+# REPOSITORY CONNECTOR
+#
+# Given a service name:
+#
+# /api/repository/inventory-service
+#
+# returns:
+#
+# - repository
+# - service path
+# - source files
+# - latest 5 commits
+#
+# ============================================================
+
+@app.get(
+    "/api/repository/{service_name}"
+)
+def get_repository_information(
+    service_name: str,
+    branch: str = Query(
+        default=GITHUB_BRANCH
+    )
+):
+
+    repository_info = get_service_repository(
+        service_name
+    )
+
+    repository = repository_info[
+        "repository"
+    ]
+
+    path = repository_info[
+        "path"
+    ]
+
+    files = fetch_repository_files(
+        repository,
+        path,
+        branch
+    )
+
+    commits = fetch_recent_commits(
+        repository,
+        path,
+        branch,
+        5
+    )
+
+    return {
+        "status": "success",
+        "service": service_name,
+        "repository": repository,
+        "path": path,
+        "branch": branch,
+        "files": files,
+        "recent_commits": commits,
+        "cached": True
+    }
+
+
+# ============================================================
+# GET SOURCE FILE FOR SERVICE
+#
+# Example:
+#
+# GET
+# /api/repository/inventory-service/file
+#     ?path=microservices/inventory-service/app.py
+#
+# ============================================================
+
+@app.get(
+    "/api/repository/{service_name}/file"
+)
+def get_repository_file(
+    service_name: str,
+    path: str = Query(...),
+    branch: str = Query(
+        default=GITHUB_BRANCH
+    )
+):
+
+    repository_info = get_service_repository(
+        service_name
+    )
+
+    repository = repository_info[
+        "repository"
+    ]
+
+    service_root = repository_info[
+        "path"
+    ].strip("/")
+
+    requested_path = path.strip("/")
+
+    # --------------------------------------------------------
+    # Security / scope check
+    #
+    # Prevent requesting arbitrary files outside the
+    # configured service repository path.
+    # --------------------------------------------------------
+
+    if not (
+        requested_path == service_root
+        or requested_path.startswith(
+            service_root + "/"
+        )
+    ):
+
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Requested file is outside "
+                "the configured service path"
+            )
+        )
+
+    file_data = fetch_source_file(
+        repository,
+        requested_path,
+        branch
+    )
+
+    return {
+        "status": "success",
+        "service": service_name,
+        "repository": repository,
+        "branch": branch,
+        "file": file_data
+    }
+
+
+# ============================================================
+# GET RECENT COMMITS FOR SERVICE
+#
+# Example:
+#
+# /api/repository/inventory-service/commits
+#
+# ============================================================
+
+@app.get(
+    "/api/repository/{service_name}/commits"
+)
+def get_repository_commits(
+    service_name: str,
+    limit: int = Query(
+        default=5,
+        ge=1,
+        le=20
+    ),
+    branch: str = Query(
+        default=GITHUB_BRANCH
+    )
+):
+
+    repository_info = get_service_repository(
+        service_name
+    )
+
+    repository = repository_info[
+        "repository"
+    ]
+
+    path = repository_info[
+        "path"
+    ]
+
+    commits = fetch_recent_commits(
+        repository,
+        path,
+        branch,
+        limit
+    )
+
+    return {
+        "status": "success",
+        "service": service_name,
+        "repository": repository,
+        "path": path,
+        "branch": branch,
+        "count": len(commits),
+        "commits": commits
+    }
+
+
+# ============================================================
+# LIST CONFIGURED SERVICES
+# ============================================================
+
+@app.get(
+    "/api/repository/services"
+)
+def list_repository_services():
+
+    services = []
+
+    for service_name, config in (
+        REPOSITORY_MAPPING.items()
+    ):
+
+        services.append(
+            {
+                "service": service_name,
+                "repository": config.get(
+                    "repository"
+                ),
+                "path": config.get(
+                    "path"
+                )
+            }
+        )
+
+    return {
+        "status": "success",
+        "count": len(services),
+        "services": services
+    }
+
+
+# ============================================================
+# CLEAR REPOSITORY CACHE
+# ============================================================
+
+@app.delete(
+    "/api/repository/cache"
+)
+def clear_repository_cache_endpoint():
+
+    count = len(
+        REPOSITORY_CACHE
+    )
+
+    clear_repository_cache()
+
+    return {
+        "status": "success",
+        "message": "Repository cache cleared",
+        "entries_removed": count
+    }
+
+@app.get("/api/repository/{service_name}/file/{file_path:path}")
+def get_repository_file(service_name: str, file_path: str):
+    try:
+        result = repository_connector.get_file(
+            service_name,
+            file_path
+        )
+
+        return {
+            "status": "success",
+            **result
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=str(e)
+        )
+
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub API error: {e}"
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 # ============================================================
 # START SERVER
 # ============================================================
