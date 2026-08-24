@@ -1,0 +1,12 @@
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: backend-webhook
+
+receivers:
+  - name: backend-webhook
+
+    webhook_configs:
+      - url: "http://backend:8000/api/alerts/webhook"
+        send_resolved: true

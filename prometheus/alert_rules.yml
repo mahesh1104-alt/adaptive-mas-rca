@@ -1,0 +1,81 @@
+groups:
+
+  - name: microservice-alerts
+
+    rules:
+
+      # ==========================================
+      # SERVICE DOWN
+      # ==========================================
+
+      - alert: MicroserviceDown
+
+        expr: up{job=~"order-service|payment-service|inventory-service"} == 0
+
+        for: 30s
+
+        labels:
+          severity: critical
+
+        annotations:
+          summary: "Microservice is down"
+
+          description: "The {{ $labels.job }} service is not responding."
+
+
+      # ==========================================
+      # HIGH ERROR RATE
+      # ==========================================
+
+      - alert: HighErrorRate
+
+        expr: |
+          (
+            sum(rate(flask_http_request_total{
+              job=~"order-service|payment-service|inventory-service",
+              status=~"5.."
+            }[1m])) by (job)
+            /
+            sum(rate(flask_http_request_total{
+              job=~"order-service|payment-service|inventory-service"
+            }[1m])) by (job)
+          ) > 0.10
+
+        for: 30s
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: "High error rate detected"
+
+          description: "{{ $labels.job }} has an HTTP error rate above 10%."
+
+
+      # ==========================================
+      # HIGH LATENCY
+      # ==========================================
+
+      - alert: HighLatency
+
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(
+                flask_http_request_duration_seconds_bucket{
+                  job=~"order-service|payment-service|inventory-service"
+                }[5m]
+              )
+            ) by (le, job)
+          ) > 0.5
+
+        for: 1m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: "High request latency"
+
+          description: "{{ $labels.job }} 95th percentile latency is above 500ms."
