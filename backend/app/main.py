@@ -71,6 +71,129 @@ POSTGRES_DB = os.getenv(
     "rca_db"
 )
 
+# ============================================================
+# HISTORICAL INCIDENT RETRIEVAL
+# ============================================================
+
+def get_historical_incidents(
+    service=None,
+    alert_name=None,
+    severity=None,
+    limit=5
+):
+    """
+    Retrieve similar historical incidents from PostgreSQL.
+
+    Matching priority:
+    1. Same service + alert name
+    2. Same service
+    3. Same alert name
+    4. Other historical incidents
+    """
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD,
+            database=POSTGRES_DB
+        )
+
+        cursor = conn.cursor(
+            cursor_factory=RealDictCursor
+        )
+
+        conditions = []
+        params = []
+
+        if service:
+            conditions.append("service = %s")
+            params.append(service)
+
+        if alert_name:
+            conditions.append("alert_name = %s")
+            params.append(alert_name)
+
+        if severity:
+            conditions.append("severity = %s")
+            params.append(severity)
+
+        where_clause = ""
+
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        query = f"""
+            SELECT
+                incident_id,
+                alert_name,
+                service,
+                severity,
+                status,
+                started_at,
+                resolved_at,
+                summary,
+                description,
+                root_cause,
+                resolution
+            FROM incidents
+            {where_clause}
+            ORDER BY started_at DESC
+            LIMIT %s
+        """
+
+        params.append(limit)
+
+        cursor.execute(query, params)
+
+        incidents = cursor.fetchall()
+
+        return [dict(incident) for incident in incidents]
+
+    except Exception as e:
+
+        print(
+            f"Historical incident lookup failed: {e}"
+        )
+
+        return []
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
+
+
+def format_historical_incidents(incidents):
+    if not incidents:
+        return "No matching historical incidents found."
+
+    lines = []
+
+    for incident in incidents:
+        lines.append(
+            f"""
+Incident ID: {incident['incident_id']}
+Alert: {incident['alert_name']}
+Service: {incident['service']}
+Severity: {incident['severity']}
+Status: {incident['status']}
+Summary: {incident['summary']}
+Description: {incident['description']}
+Root Cause: {incident['root_cause']}
+Resolution: {incident['resolution']}
+"""
+        )
+
+    return "\n".join(lines)
+
 
 # ============================================================
 # GITHUB CONFIGURATION
