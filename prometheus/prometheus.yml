@@ -31,3 +31,12 @@ scrape_configs:
     static_configs:
       - targets:
           - "inventory-service:8003"
+
+
+  - job_name: "pushgateway"
+
+    honor_labels: true
+
+    static_configs:
+      - targets:
+          - "pushgateway:9091"

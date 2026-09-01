@@ -11,11 +11,12 @@ import ollama
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 from app.repository_connector import RepositoryConnector
+from app.ingestion import router as ingestion_router
 
 repository_connector = RepositoryConnector()
 
 app = FastAPI(title="Adaptive MAS RCA API")
-
+app.include_router(ingestion_router)
 
 # ============================================================
 # CONFIGURATION

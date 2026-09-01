@@ -14,6 +14,23 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  
+  # =========================================================
+  # Pushgateway - Metrics Ingestion
+  # Subtask 23
+  # =========================================================
+
+  pushgateway:
+    image: prom/pushgateway:latest
+    container_name: adaptive-mas-rca-pushgateway
+
+    ports:
+      - "9091:9091"
+
+    restart: unless-stopped
+
+
   # =========================================================
   # Prometheus - Metrics Collection
   # =========================================================
@@ -34,6 +51,7 @@ services:
       - payment-service
       - inventory-service
       - alertmanager
+      - pushgateway
 
     restart: unless-stopped
 
@@ -72,7 +90,12 @@ services:
     ports:
       - "8000:8000"
 
+    volumes:
+      - ./logs:/logs
+
     environment:
+      OLLAMA_HOST: http://host.docker.internal:11434
+      OLLAMA_MODEL: llama3:latest
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER}
