@@ -16,6 +16,7 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 
 COPY app ./app
+COPY tests ./tests
 
 EXPOSE 8000
 
