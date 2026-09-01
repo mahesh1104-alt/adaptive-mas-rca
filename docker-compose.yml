@@ -45,6 +45,12 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
 
     depends_on:
       - order-service
@@ -64,6 +70,14 @@ services:
     image: jaegertracing/all-in-one:latest
     container_name: adaptive-mas-rca-jaeger
 
+    environment:
+      SPAN_STORAGE_TYPE: badger
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_VALUE: /badger/data
+      BADGER_DIRECTORY_KEY: /badger/key
+
+    user: "0"
+
     ports:
       # Jaeger UI
       - "16686:16686"
@@ -73,6 +87,9 @@ services:
 
       # OTLP HTTP
       - "4318:4318"
+
+    volumes:
+      - jaeger_data:/badger
 
     restart: unless-stopped
 
@@ -301,3 +318,5 @@ services:
 volumes:
   postgres_data:
   neo4j_data:
+  prometheus_data:
+  jaeger_data:

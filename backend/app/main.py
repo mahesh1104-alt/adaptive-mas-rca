@@ -12,6 +12,7 @@ import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 from app.repository_connector import RepositoryConnector
 from app.ingestion import router as ingestion_router
+from app.storage import query_logs, query_metrics, query_traces
 
 repository_connector = RepositoryConnector()
 
@@ -1976,6 +1977,71 @@ def get_repository_file(service_name: str, file_path: str):
             status_code=500,
             detail=str(e)
         )
+
+
+# ============================================================
+# STORAGE QUERY ENDPOINTS
+# ============================================================
+
+@app.get("/api/storage/logs")
+def get_storage_logs(
+    service: str = Query(...),
+    start_time: str = Query(None),
+    end_time: str = Query(None),
+):
+    """
+    Query raw logs for a service within an optional time range.
+    """
+
+    return {
+        "service": service,
+        "start_time": start_time,
+        "end_time": end_time,
+        "data": query_logs(
+            service=service,
+            start_time=start_time,
+            end_time=end_time,
+        ),
+    }
+
+
+@app.get("/api/storage/metrics")
+def get_storage_metrics(
+    service: str = Query(...),
+    start_time:str = Query(None),
+    end_time: str = Query(None),
+    metric_name: str = Query(None),
+):
+    """
+    Query Prometheus metrics for a service.
+    """
+
+    return query_metrics(
+        service=service,
+        start_time=start_time,
+        end_time=end_time,
+        metric_name=metric_name,
+    )
+
+
+@app.get("/api/storage/traces")
+def get_storage_traces(
+    service: str = Query(...),
+    start_time: str = Query(None),
+    end_time: str = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """
+    Query Jaeger traces for a service.
+    """
+
+    return query_traces(
+        service=service,
+        start_time=start_time,
+        end_time=end_time,
+        limit=limit,
+    )
+
 # ============================================================
 # START SERVER
 # ============================================================
