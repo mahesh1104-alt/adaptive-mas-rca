@@ -13,6 +13,7 @@ from psycopg2.extras import Json, RealDictCursor
 from app.repository_connector import RepositoryConnector
 from app.ingestion import router as ingestion_router
 from app.storage import query_logs, query_metrics, query_traces
+from app.source_preprocessing import preprocess_source
 
 repository_connector = RepositoryConnector()
 
@@ -1835,6 +1836,115 @@ def get_repository_file(
         "repository": repository,
         "branch": branch,
         "file": file_data
+    }
+
+# ============================================================
+# PREPROCESS SOURCE FILE FOR SERVICE
+# ============================================================
+
+@app.get(
+    "/api/repository/{service_name}/preprocess"
+)
+def preprocess_repository_file(
+    service_name: str,
+    path: str = Query(...),
+    fault_line: int = Query(
+        default=None,
+        ge=1
+    ),
+    context_lines: int = Query(
+        default=20,
+        ge=0
+    ),
+    branch: str = Query(
+        default=GITHUB_BRANCH
+    )
+):
+
+    repository_info = get_service_repository(
+        service_name
+    )
+
+    repository = repository_info[
+        "repository"
+    ]
+
+    service_root = repository_info[
+        "path"
+    ].strip("/")
+
+    requested_path = path.strip("/")
+
+    # --------------------------------------------------------
+    # Security / scope check
+    # --------------------------------------------------------
+
+    if not (
+        requested_path == service_root
+        or requested_path.startswith(
+            service_root + "/"
+        )
+    ):
+
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Requested file is outside "
+                "the configured service path"
+            )
+        )
+
+    # --------------------------------------------------------
+    # Retrieve source code
+    # --------------------------------------------------------
+
+    file_data = fetch_source_file(
+        repository,
+        requested_path,
+        branch
+    )
+
+    source = file_data.get(
+        "content",
+        ""
+    )
+
+    # --------------------------------------------------------
+    # Preprocess source code
+    # --------------------------------------------------------
+
+    try:
+
+        units = preprocess_source(
+            source,
+            fault_line=fault_line,
+            context_lines=context_lines
+        )
+
+    except SyntaxError as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unable to parse source file: {e}"
+            )
+        )
+
+    return {
+        "status": "success",
+        "service": service_name,
+        "repository": repository,
+        "branch": branch,
+        "file": {
+            "name": file_data.get("name"),
+            "path": file_data.get("path"),
+            "size": file_data.get("size"),
+            "sha": file_data.get("sha"),
+            "html_url": file_data.get("html_url")
+        },
+        "fault_line": fault_line,
+        "context_lines": context_lines,
+        "units": units
     }
 
 
