@@ -14,6 +14,7 @@ from app.repository_connector import RepositoryConnector
 from app.ingestion import router as ingestion_router
 from app.storage import query_logs, query_metrics, query_traces
 from app.source_preprocessing import preprocess_source
+from app.feature_extraction import build_feature_bundle
 
 repository_connector = RepositoryConnector()
 
@@ -655,16 +656,162 @@ def read_logs():
 
 
 # ============================================================
-# RCA ANALYSIS
+# SUBTASK 30
+# INCIDENT FEATURE BUNDLE
 # ============================================================
 
+def build_incident_feature_bundle(
+    incident_id,
+    events,
+):
+    """
+    Build one compact feature bundle for an RCA incident.
+
+    Combines:
+    - preprocessed logs
+    - metrics
+    - traces
+    - relevant source code
+    """
+
+    if not events:
+        return build_feature_bundle(
+            incident_id=incident_id,
+            logs=[],
+            metrics=[],
+            traces=[],
+            source=[],
+        )
+
+    # --------------------------------------------------------
+    # Incident time window
+    # --------------------------------------------------------
+
+    timestamps = [
+        event.get("timestamp")
+        for event in events
+        if event.get("timestamp")
+    ]
+
+    timestamps = sorted(timestamps)
+
+    start_time = timestamps[0] if timestamps else None
+    end_time = timestamps[-1] if timestamps else None
+
+    # --------------------------------------------------------
+    # Services involved in the incident
+    # --------------------------------------------------------
+
+    services = sorted({
+        event.get("service")
+        for event in events
+        if event.get("service")
+    })
+
+    # --------------------------------------------------------
+    # Query metrics and traces for affected services
+    # --------------------------------------------------------
+
+    metrics = []
+    traces = []
+
+    for service in services:
+
+        try:
+            metric_result = query_metrics(
+                service=service,
+                start_time=start_time,
+                end_time=end_time,
+            )
+
+            metrics.append({
+                "service": service,
+                "data": metric_result,
+            })
+
+        except Exception:
+            # A failed metrics query should not prevent RCA.
+            continue
+
+        try:
+            trace_result = query_traces(
+                service=service,
+                start_time=start_time,
+                end_time=end_time,
+            )
+
+            traces.append({
+                "service": service,
+                "data": trace_result,
+            })
+
+        except Exception:
+            # A failed trace query should not prevent RCA.
+            continue
+
+    # --------------------------------------------------------
+    # Retrieve and preprocess relevant source
+    # --------------------------------------------------------
+
+    source = []
+
+    for service in services:
+
+        try:
+            source_file = repository_connector.get_file(
+                service,
+                "app.py",
+            )
+
+            source_content = source_file.get(
+                "content",
+                "",
+            )
+
+            if not source_content:
+                continue
+
+            source_units = preprocess_source(
+                source_content,
+            )
+
+            for unit in source_units:
+                unit["service"] = service
+                unit["file"] = source_file.get(
+                    "path",
+                    "app.py",
+                )
+
+            source.extend(source_units)
+
+        except Exception:
+            # Source retrieval should not prevent RCA.
+            continue
+
+    # --------------------------------------------------------
+    # Build ONE compact bundle
+    # --------------------------------------------------------
+
+    return build_feature_bundle(
+        incident_id=incident_id,
+        logs=events,
+        metrics=metrics,
+        traces=traces,
+        source=source,
+    )
+
+
+# ============================================================
+# RCA ANALYSIS
+# ============================================================
 def analyze_with_llama(
-    events
+    feature_bundle
 ):
 
-    log_text = "\n".join(
-        json.dumps(event)
-        for event in events
+    feature_text = json.dumps(
+        feature_bundle,
+        indent=2,
+        default=str
     )
 
     prompt = f"""
@@ -707,9 +854,9 @@ Return these sections:
 7. Confidence
 8. Recommended Remediation
 
-Logs:
+Compact Incident Feature Bundle:
 
-{log_text}
+{feature_text}
 """
 
     response = ollama.chat(
@@ -745,10 +892,15 @@ def run_rca():
             detail="No microservice logs found"
         )
 
+    feature_bundle = build_incident_feature_bundle(
+        incident_id="RCA-LIVE",
+        events=events,
+    )
+
     try:
 
         result = analyze_with_llama(
-            events
+            feature_bundle
         )
 
     except Exception as e:
@@ -780,6 +932,7 @@ def run_rca():
         "status": "success",
         "model": OLLAMA_MODEL,
         "events_analyzed": len(events),
+        "feature_bundle": feature_bundle,
         "root_cause_analysis": result
     }
 
