@@ -15,6 +15,8 @@ from app.ingestion import router as ingestion_router
 from app.storage import query_logs, query_metrics, query_traces
 from app.source_preprocessing import preprocess_source
 from app.feature_extraction import build_feature_bundle
+from app.embedding_generation import generate_incident_embedding
+from app.vector_store import search_similar_incidents
 
 repository_connector = RepositoryConnector()
 
@@ -801,11 +803,80 @@ def build_incident_feature_bundle(
     )
 
 
+def get_similar_historical_incidents(
+    feature_bundle,
+    n_results=5,
+):
+    """
+    Find historically similar incidents using semantic embeddings.
+
+    The current incident feature bundle is converted into an embedding,
+    then compared against historical incident embeddings stored in ChromaDB.
+    """
+
+    try:
+        embedding = generate_incident_embedding(feature_bundle)
+
+        results = search_similar_incidents(
+            embedding=embedding,
+            n_results=n_results,
+        )
+
+        similar_incidents = []
+
+        ids = results.get("ids", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        documents = results.get("documents", [[]])[0]
+
+        for index, incident_id in enumerate(ids):
+            metadata = (
+                metadatas[index]
+                if index < len(metadatas)
+                else {}
+            )
+
+            document = (
+                documents[index]
+                if index < len(documents)
+                else ""
+            )
+
+            distance = (
+                distances[index]
+                if index < len(distances)
+                else None
+            )
+
+            similar_incidents.append(
+                {
+                    "incident_id": incident_id,
+                    "distance": distance,
+                    "alert_name": metadata.get("alert_name", ""),
+                    "service": metadata.get("service", ""),
+                    "severity": metadata.get("severity", ""),
+                    "status": metadata.get("status", ""),
+                    "started_at": metadata.get("started_at", ""),
+                    "resolved_at": metadata.get("resolved_at", ""),
+                    "root_cause": metadata.get("root_cause", ""),
+                    "resolution": metadata.get("resolution", ""),
+                    "document": document,
+                }
+            )
+
+        return similar_incidents
+
+    except Exception as e:
+        print(f"Semantic historical incident retrieval failed: {e}")
+        return []
+
+
 # ============================================================
 # RCA ANALYSIS
 # ============================================================
 def analyze_with_llama(
-    feature_bundle
+    feature_bundle,
+    similar_historical_incidents=None,
 ):
 
     feature_text = json.dumps(
@@ -814,7 +885,32 @@ def analyze_with_llama(
         default=str
     )
 
+    historical_context = ""
+
+    if similar_historical_incidents:
+        historical_lines = []
+
+        for incident in similar_historical_incidents:
+            historical_lines.append(
+                f"""
+Incident ID: {incident.get('incident_id', '')}
+Similarity Distance: {incident.get('distance', '')}
+Alert: {incident.get('alert_name', '')}
+Service: {incident.get('service', '')}
+Severity: {incident.get('severity', '')}
+Summary: {incident.get('document', '')}
+Historical Root Cause: {incident.get('root_cause', '')}
+Historical Resolution: {incident.get('resolution', '')}
+"""
+            )
+
+        historical_context = "\n".join(historical_lines)
+
+    if not historical_context:
+        historical_context = "No similar historical incidents were found."
+
     prompt = f"""
+
 You are an expert Root Cause Analysis assistant
 for a distributed microservice system.
 
@@ -843,22 +939,55 @@ IMPORTANT RCA RULES:
 
 8. Do not invent evidence.
 
+9. Use similar historical incidents as supporting
+   evidence, not as definitive proof.
+
+10. Do NOT copy the root cause of a historical incident
+    unless the current incident evidence supports it.
+
+11. Give higher priority to evidence from the current
+    incident than historical similarity.
+
 Return these sections:
 
 1. Incident
+
 2. Failure Symptoms
+
 3. Root Cause
+
 4. Root Cause Service
+
 5. Evidence
+
 6. Failure Propagation
+
 7. Confidence
+
 8. Recommended Remediation
 
-Compact Incident Feature Bundle:
+
+============================================================
+CURRENT INCIDENT FEATURE BUNDLE
+============================================================
 
 {feature_text}
-"""
 
+
+============================================================
+SIMILAR HISTORICAL INCIDENTS
+============================================================
+
+{historical_context}
+
+Use the historical incidents above to help identify
+patterns and possible causes.
+
+However, historical incidents are only references.
+The final RCA must be based primarily on evidence
+contained in the CURRENT INCIDENT FEATURE BUNDLE.
+
+"""
     response = ollama.chat(
         model=OLLAMA_MODEL,
         messages=[
@@ -897,10 +1026,31 @@ def run_rca():
         events=events,
     )
 
+    similar_historical_incidents = get_similar_historical_incidents(
+        feature_bundle,
+        n_results=5,
+    )
+
+    print()
+    print("=" * 60)
+    print("SEMANTIC HISTORICAL INCIDENTS")
+    print("=" * 60)
+
+    for incident in similar_historical_incidents:
+        print(
+            f"{incident['incident_id']} | "
+            f"distance={incident['distance']} | "
+            f"service={incident['service']} | "
+            f"alert={incident['alert_name']}"
+        )
+
+    print("=" * 60)
+
     try:
 
         result = analyze_with_llama(
-            feature_bundle
+            feature_bundle,
+            similar_historical_incidents,
         )
 
     except Exception as e:
