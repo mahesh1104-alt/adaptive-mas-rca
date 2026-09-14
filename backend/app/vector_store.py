@@ -154,7 +154,7 @@ def store_historical_incident(
 
 def search_similar_incidents(
     embedding: list[float],
-    n_results: int = 5,
+    n_results: int = 10,
 ) -> dict:
     """
     Search ChromaDB for incidents with similar embeddings.

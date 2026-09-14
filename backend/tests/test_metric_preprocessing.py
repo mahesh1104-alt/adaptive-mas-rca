@@ -1,3 +1,4 @@
+import pytest
 from app.metric_preprocessing import (
     aggregate_metrics,
     detect_threshold_anomalies,
@@ -264,3 +265,215 @@ def test_complete_pipeline_with_injected_cpu_spike():
     assert len(spike_records) == 1
     assert spike_records[0]["anomaly"] is True
     assert spike_records[0]["z_score"] > 2.0
+
+
+def test_normalize_unit_same_unit():
+    result = normalize_unit(25, "ms", "ms")
+
+    assert result == 25.0
+
+
+def test_normalize_unit_missing_units():
+    result = normalize_unit(25, None, None)
+
+    assert result == 25.0
+
+
+def test_normalize_unit_invalid_source_unit():
+    with pytest.raises(ValueError):
+        normalize_unit(10, "invalid", "s")
+
+
+def test_normalize_unit_invalid_target_unit():
+    with pytest.raises(ValueError):
+        normalize_unit(10, "ms", "invalid")
+
+
+def test_aggregate_metrics_empty_input():
+    result = aggregate_metrics([])
+
+    assert result == []
+
+
+def test_aggregate_metrics_invalid_bucket_seconds():
+    with pytest.raises(ValueError):
+        aggregate_metrics(
+            [
+                {
+                    "timestamp": "2026-08-01T10:00:00Z",
+                    "metric": "cpu",
+                    "value": 50,
+                }
+            ],
+            bucket_seconds=0,
+        )
+
+
+def test_aggregate_metrics_different_aggregations():
+    samples = [
+        {
+            "timestamp": "2026-08-01T10:00:05Z",
+            "metric": "cpu",
+            "value": 20,
+        },
+        {
+            "timestamp": "2026-08-01T10:00:25Z",
+            "metric": "cpu",
+            "value": 40,
+        },
+    ]
+
+    assert aggregate_metrics(
+        samples,
+        aggregation="sum",
+    )[0]["value"] == 60
+
+    assert aggregate_metrics(
+        samples,
+        aggregation="min",
+    )[0]["value"] == 20
+
+    assert aggregate_metrics(
+        samples,
+        aggregation="max",
+    )[0]["value"] == 40
+
+
+def test_aggregate_metrics_invalid_aggregation():
+    samples = [
+        {
+            "timestamp": "2026-08-01T10:00:00Z",
+            "metric": "cpu",
+            "value": 50,
+        }
+    ]
+
+    with pytest.raises(ValueError):
+        aggregate_metrics(
+            samples,
+            aggregation="median",
+        )
+
+
+def test_zscore_empty_input():
+    result = detect_zscore_anomalies([])
+
+    assert result == []
+
+
+def test_zscore_invalid_threshold():
+    samples = [
+        {"timestamp": "1", "metric": "cpu", "value": 10},
+        {"timestamp": "2", "metric": "cpu", "value": 20},
+    ]
+
+    with pytest.raises(ValueError):
+        detect_zscore_anomalies(
+            samples,
+            threshold=0,
+        )
+
+
+def test_zscore_constant_values():
+    samples = [
+        {"timestamp": "1", "metric": "cpu", "value": 50},
+        {"timestamp": "2", "metric": "cpu", "value": 50},
+        {"timestamp": "3", "metric": "cpu", "value": 50},
+    ]
+
+    result = detect_zscore_anomalies(samples)
+
+    assert all(item["z_score"] == 0 for item in result)
+    assert all(item["anomaly"] is False for item in result)
+
+
+def test_threshold_minimum_detection():
+    samples = [
+        {"metric": "cpu", "value": 20},
+        {"metric": "cpu", "value": 50},
+        {"metric": "cpu", "value": 80},
+    ]
+
+    result = detect_threshold_anomalies(
+        samples,
+        minimum=30,
+    )
+
+    assert result[0]["anomaly"] is True
+    assert result[1]["anomaly"] is False
+    assert result[2]["anomaly"] is False
+
+
+def test_threshold_requires_limit():
+    samples = [
+        {"metric": "cpu", "value": 50},
+    ]
+
+    with pytest.raises(ValueError):
+        detect_threshold_anomalies(samples)
+
+
+def test_normalize_metric_units_without_unit():
+    samples = [
+        {
+            "timestamp": "2026-08-01T10:00:00Z",
+            "metric": "latency",
+            "value": 100,
+        }
+    ]
+
+    result = normalize_metric_units(
+        samples,
+        target_unit="s",
+    )
+
+    assert result[0]["value"] == 100.0
+    assert result[0]["unit"] == "s"
+
+
+def test_preprocess_metrics_empty_input():
+    result = preprocess_metrics([])
+
+    assert result == []
+
+
+def test_preprocess_metrics_threshold_method():
+    samples = [
+        {
+            "timestamp": "2026-08-01T10:00:00Z",
+            "metric": "cpu",
+            "value": 50,
+        },
+        {
+            "timestamp": "2026-08-01T10:01:00Z",
+            "metric": "cpu",
+            "value": 95,
+        },
+    ]
+
+    result = preprocess_metrics(
+        samples,
+        bucket_seconds=60,
+        anomaly_method="threshold",
+        maximum=90,
+    )
+
+    assert len(result) == 2
+    assert result[0]["anomaly"] is False
+    assert result[1]["anomaly"] is True
+
+
+def test_preprocess_metrics_invalid_anomaly_method():
+    samples = [
+        {
+            "timestamp": "2026-08-01T10:00:00Z",
+            "metric": "cpu",
+            "value": 50,
+        }
+    ]
+
+    with pytest.raises(ValueError):
+        preprocess_metrics(
+            samples,
+            anomaly_method="invalid",
+        )

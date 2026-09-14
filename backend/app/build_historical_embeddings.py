@@ -3,12 +3,12 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from embedding_generation import (
+from .embedding_generation import (
     historical_incident_to_text,
     generate_historical_incident_embedding,
 )
 
-from vector_store import (
+from .vector_store import (
     store_historical_incident,
 )
 
