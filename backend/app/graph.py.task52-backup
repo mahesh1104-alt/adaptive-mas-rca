@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+import operator
+from typing import Annotated, Any, TypedDict
+
+from langgraph.graph import END, START, StateGraph
+
+from app.agents.knowledge_retrieval_agent import KnowledgeRetrievalAgent
+from app.agents.log_analysis_agent import LogAnalysisAgent
+from app.agents.metrics_analysis_agent import MetricsAnalysisAgent
+from app.agents.reasoning_agent import ReasoningAgent
+from app.agents.source_code_analysis_agent import SourceCodeAnalysisAgent
+from app.agents.validation_agent import ValidationAgent
+from app.ollama_adapter import ollama_llm
+from app.trace_analysis_agent import TraceAnalysisAgent
+from app.trace_preprocessing import preprocess_trace
+
+class TraceLLMAdapter:
+    def invoke(self, prompt: str):
+        import ollama
+
+        response = ollama.chat(
+            model="llama3:latest",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response["message"]["content"]
+
+
+class GraphState(TypedDict, total=False):
+    raw_inputs: dict[str, Any]
+
+    # Parallel branches return only their own dictionary entry.
+    # operator.or_ safely merges those entries during fan-in.
+    agent_outputs: Annotated[
+        dict[str, dict[str, Any]],
+        operator.or_,
+    ]
+
+
+def build_graph(
+    log_llm=None,
+    metrics_llm=None,
+    source_llm=None,
+    trace_llm=None,
+):
+    log_agent = LogAnalysisAgent(llm=log_llm or ollama_llm)
+    metrics_agent = MetricsAnalysisAgent(llm=metrics_llm or ollama_llm)
+    source_agent = SourceCodeAnalysisAgent(llm=source_llm or ollama_llm)
+    trace_agent = TraceAnalysisAgent(llm=trace_llm or TraceLLMAdapter())
+
+    knowledge_agent = KnowledgeRetrievalAgent()
+    reasoning_agent = ReasoningAgent(llm=ollama_llm)
+    validation_agent = ValidationAgent()
+
+    def log_node(state: GraphState):
+        result = log_agent.run(
+            {"raw_inputs": state.get("raw_inputs", {})}
+        )
+        return {
+            "agent_outputs": {
+                "log_analysis_agent": result
+            }
+        }
+
+    def metrics_node(state: GraphState):
+        result = metrics_agent.run(
+            {"raw_inputs": state.get("raw_inputs", {})}
+        )
+        return {
+            "agent_outputs": {
+                "metrics_analysis_agent": result
+            }
+        }
+
+    def source_node(state: GraphState):
+        result = source_agent.run(
+            {"raw_inputs": state.get("raw_inputs", {})}
+        )
+        return {
+            "agent_outputs": {
+                "source_code_analysis_agent": result
+            }
+        }
+
+    def trace_node(state: GraphState):
+        raw_inputs = state.get("raw_inputs", {})
+
+        trace_input = raw_inputs.get("trace")
+
+        if trace_input is None:
+            raise ValueError("Trace input is required for Trace Analysis Agent.")
+
+    # Convert raw Jaeger data into the simplified trace summary
+    # expected by TraceAnalysisAgent.
+        trace_summary = preprocess_trace(trace_input)
+
+        result = trace_agent.analyze(trace_summary)
+
+        return {
+            "agent_outputs": {
+                "trace_analysis_agent": result.model_dump()
+            }
+        }
+
+    def knowledge_node(state: GraphState):
+        raw_inputs = state.get("raw_inputs", {})
+
+        result = knowledge_agent.run(
+            {"raw_inputs": raw_inputs}
+        )
+
+        return {
+            "agent_outputs": {
+                "knowledge_retrieval_agent": result.model_dump()
+            }
+        }
+
+    def reasoning_node(state: GraphState):
+        raw_inputs = state.get("raw_inputs", {})
+        agent_outputs = state.get("agent_outputs", {})
+
+        result = reasoning_agent.run(
+            {
+                "raw_inputs": raw_inputs,
+                "agent_outputs": agent_outputs,
+            }
+        )
+
+        return {
+            "agent_outputs": {
+                "reasoning_agent": result.model_dump()
+            }
+        }
+
+    def validation_node(state: GraphState):
+        raw_inputs = state.get("raw_inputs", {})
+        agent_outputs = state.get("agent_outputs", {})
+
+        result = validation_agent.run(
+            {
+                "raw_inputs": raw_inputs,
+                "agent_outputs": agent_outputs,
+            }
+        )
+
+        return {
+            "agent_outputs": {
+                "validation_agent": result.model_dump()
+            }
+        }
+
+    workflow = StateGraph(GraphState)
+
+    workflow.add_node("log_analysis", log_node)
+    workflow.add_node("metrics_analysis", metrics_node)
+    workflow.add_node("source_code_analysis", source_node)
+    workflow.add_node("trace_analysis", trace_node)
+    workflow.add_node("knowledge_retrieval", knowledge_node)
+    workflow.add_node("reasoning", reasoning_node)
+    workflow.add_node("validation", validation_node)
+
+    # ---------------------------------------------------------
+    # PARALLEL FAN-OUT
+    # ---------------------------------------------------------
+    workflow.add_edge(START, "log_analysis")
+    workflow.add_edge(START, "metrics_analysis")
+    workflow.add_edge(START, "source_code_analysis")
+    workflow.add_edge(START, "trace_analysis")
+
+    # ---------------------------------------------------------
+    # FAN-IN
+    #
+    # Knowledge Retrieval starts only after all four
+    # specialized analysis branches complete.
+    # ---------------------------------------------------------
+    workflow.add_edge("log_analysis", "knowledge_retrieval")
+    workflow.add_edge("metrics_analysis", "knowledge_retrieval")
+    workflow.add_edge("source_code_analysis", "knowledge_retrieval")
+    workflow.add_edge("trace_analysis", "knowledge_retrieval")
+
+    # ---------------------------------------------------------
+    # REASONING -> VALIDATION -> END
+    # ---------------------------------------------------------
+    workflow.add_edge("knowledge_retrieval", "reasoning")
+    workflow.add_edge("reasoning", "validation")
+    workflow.add_edge("validation", END)
+
+    return workflow.compile()
+
+
+graph = build_graph()

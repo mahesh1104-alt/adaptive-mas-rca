@@ -230,6 +230,83 @@ def aggregate_metrics(
     return result
 
 
+PROMETHEUS_COUNTER_METRICS = {
+    "flask_http_request_total",
+    "flask_http_request_duration_seconds_count",
+    "flask_http_request_duration_seconds_sum",
+}
+
+def convert_counter_to_rates(
+    samples: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Convert cumulative counter samples into per-second rates.
+    """
+    if not samples:
+        return []
+
+    samples = [
+        sample
+        for sample in samples
+        if (
+            sample.get("metric") or sample.get("name")
+        ) in PROMETHEUS_COUNTER_METRICS or str(sample.get("metric") or sample.get("name") or "").endswith("_total")
+    ]
+
+    groups = defaultdict(list)
+
+    for sample in samples:
+        key = (
+            sample.get("metric") or sample.get("name"),
+            sample.get("service"),
+        )
+        groups[key].append(sample)
+
+    results = []
+
+    for group_samples in groups.values():
+        group_samples = sorted(
+            group_samples,
+            key=lambda sample: parse_timestamp(sample["timestamp"]),
+        )
+
+        for previous, current in zip(
+            group_samples,
+            group_samples[1:],
+        ):
+            previous_value = float(previous["value"])
+            current_value = float(current["value"])
+
+            previous_time = parse_timestamp(
+                previous["timestamp"]
+            )
+            current_time = parse_timestamp(
+                current["timestamp"]
+            )
+
+            elapsed_seconds = (
+                current_time - previous_time
+            ).total_seconds()
+
+            if elapsed_seconds <= 0:
+                continue
+
+            delta = current_value - previous_value
+
+            # Handle normal counter resets.
+            if delta < 0:
+                delta = current_value
+
+            enriched = dict(current)
+            enriched["value"] = delta / elapsed_seconds
+            enriched["rate"] = enriched["value"]
+            enriched["anomaly"] = False
+
+            results.append(enriched)
+
+    return results
+
+
 # ============================================================
 # Z-SCORE ANOMALY DETECTION
 # ============================================================
@@ -239,7 +316,8 @@ def detect_zscore_anomalies(
     threshold: float = 3.0,
 ) -> List[Dict[str, Any]]:
     """
-    Detect anomalies using z-score.
+    Detect anomalies using z-score independently for each
+    metric/service group.
 
     z = (value - mean) / standard deviation
 
@@ -256,44 +334,56 @@ def detect_zscore_anomalies(
             "threshold must be greater than zero"
         )
 
-    values = [
-        float(sample["value"])
-        for sample in samples
-    ]
+    groups = defaultdict(list)
 
-    mean = sum(values) / len(values)
+    for sample in samples:
+        key = (
+            sample.get("metric")
+            or sample.get("name"),
+            sample.get("service"),
+        )
 
-    variance = sum(
-        (value - mean) ** 2
-        for value in values
-    ) / len(values)
-
-    stddev = variance ** 0.5
+        groups[key].append(sample)
 
     results = []
 
-    for sample in samples:
-        value = float(sample["value"])
+    for group_samples in groups.values():
 
-        if stddev == 0:
-            z_score = 0.0
-        else:
-            z_score = (
-                (value - mean)
-                / stddev
+        values = [
+            float(sample["value"])
+            for sample in group_samples
+        ]
+
+        mean = sum(values) / len(values)
+
+        variance = sum(
+            (value - mean) ** 2
+            for value in values
+        ) / len(values)
+
+        stddev = variance ** 0.5
+
+        for sample in group_samples:
+            value = float(sample["value"])
+
+            if stddev == 0:
+                z_score = 0.0
+            else:
+                z_score = (
+                    (value - mean)
+                    / stddev
+                )
+
+            enriched = dict(sample)
+
+            enriched["z_score"] = z_score
+            enriched["anomaly"] = (
+                abs(z_score) >= threshold
             )
 
-        enriched = dict(sample)
-
-        enriched["z_score"] = z_score
-        enriched["anomaly"] = (
-            abs(z_score) >= threshold
-        )
-
-        results.append(enriched)
+            results.append(enriched)
 
     return results
-
 
 # ============================================================
 # STATIC THRESHOLD DETECTION
@@ -403,6 +493,27 @@ def preprocess_metrics(
         return []
 
     working_samples = samples
+
+    counter_samples = [
+        sample
+        for sample in working_samples
+        if (
+            sample.get("metric") or sample.get("name")
+        ) in PROMETHEUS_COUNTER_METRICS or str(sample.get("metric") or sample.get("name") or "").endswith("_total")
+    ]
+
+    gauge_samples = [
+        sample
+        for sample in working_samples
+        if (
+            sample.get("metric") or sample.get("name")
+        ) not in PROMETHEUS_COUNTER_METRICS
+    ]
+
+    if counter_samples:
+        counter_samples = convert_counter_to_rates(counter_samples)
+
+    working_samples = gauge_samples + counter_samples
 
     if target_unit:
         working_samples = normalize_metric_units(

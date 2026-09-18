@@ -5,7 +5,7 @@ from langchain_core.documents import Document
 from langchain_core.runnables import RunnableLambda
 
 from app.langchain_retriever import HybridLangChainRetriever
-
+from app.retrieval_cache import retrieval_cache
 
 def sample_results():
     return [
@@ -44,6 +44,12 @@ def sample_results():
             ],
         },
     ]
+
+@pytest.fixture(autouse=True)
+def clear_retrieval_cache():
+    retrieval_cache.clear()
+    yield
+    retrieval_cache.clear()
 
 
 def test_retriever_direct_invoke():

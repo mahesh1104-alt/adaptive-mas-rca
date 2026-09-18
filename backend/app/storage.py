@@ -4,14 +4,19 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv('../.env')
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-LOG_DIR = os.getenv("LOG_DIR", "/logs")
-
+LOG_DIR = os.getenv(
+    "LOG_DIR",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "logs"))
+)
 PROMETHEUS_URL = os.getenv(
     "PROMETHEUS_URL",
     "http://prometheus:9090",
@@ -144,8 +149,8 @@ def query_metrics(
     """
     Query metrics from Prometheus using its HTTP API.
 
-    A PromQL selector is constructed for the service and,
-    when provided, a metric name.
+    Uses an instant query when no time window is supplied.
+    Uses a range query when both start_time and end_time are supplied.
     """
 
     if metric_name:
@@ -164,6 +169,60 @@ def query_metrics(
     if start_time and end_time:
         params["start"] = start_time
         params["end"] = end_time
+        params["step"] = "5s"
+        endpoint = "/api/v1/query_range"
+    else:
+        endpoint = "/api/v1/query"
+    try:
+        response = requests.get(
+            f"{PROMETHEUS_URL}{endpoint}",
+            params=params,
+            timeout=10,
+        )
+
+        response.raise_for_status()
+
+        return response.json()
+
+    except requests.RequestException as exc:
+        return {
+            "status": "error",
+            "error": str(exc),
+            "data": {
+                "resultType": "matrix",
+                "result": [],
+            },
+        }
+
+
+def query_average_request_latency(
+    service: str,
+    window: str = "5m",
+) -> Dict[str, Any]:
+    """
+    Query the average HTTP request latency for a service.
+
+    Calculates:
+
+        rate(duration_sum) / rate(duration_count)
+
+    across all request paths for the service.
+    """
+
+    query = (
+        'sum(rate('
+        'flask_http_request_duration_seconds_sum'
+        f'{{job="{service}"}}'
+        f'[{window}])) / '
+        'sum(rate('
+        'flask_http_request_duration_seconds_count'
+        f'{{job="{service}"}}'
+        f'[{window}]))'
+    )
+
+    params = {
+        "query": query,
+    }
 
     try:
         response = requests.get(
@@ -245,3 +304,4 @@ def query_traces(
                 }
             ],
         }
+

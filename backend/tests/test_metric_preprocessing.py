@@ -1,6 +1,7 @@
 import pytest
 from app.metric_preprocessing import (
     aggregate_metrics,
+    convert_counter_to_rates,
     detect_threshold_anomalies,
     detect_zscore_anomalies,
     normalize_unit,
@@ -477,3 +478,112 @@ def test_preprocess_metrics_invalid_anomaly_method():
             samples,
             anomaly_method="invalid",
         )
+def test_complete_pipeline_with_cpu_and_latency_spikes():
+    samples = [
+        {"timestamp": "2026-08-01T10:00:01Z", "metric": "cpu_usage", "service": "order-service", "value": 45},
+        {"timestamp": "2026-08-01T10:01:01Z", "metric": "cpu_usage", "service": "order-service", "value": 47},
+        {"timestamp": "2026-08-01T10:02:01Z", "metric": "cpu_usage", "service": "order-service", "value": 46},
+        {"timestamp": "2026-08-01T10:03:01Z", "metric": "cpu_usage", "service": "order-service", "value": 48},
+        {"timestamp": "2026-08-01T10:04:01Z", "metric": "cpu_usage", "service": "order-service", "value": 47},
+        {"timestamp": "2026-08-01T10:05:01Z", "metric": "cpu_usage", "service": "order-service", "value": 96},
+
+        {"timestamp": "2026-08-01T10:00:01Z", "metric": "latency_ms", "service": "order-service", "value": 120},
+        {"timestamp": "2026-08-01T10:01:01Z", "metric": "latency_ms", "service": "order-service", "value": 125},
+        {"timestamp": "2026-08-01T10:02:01Z", "metric": "latency_ms", "service": "order-service", "value": 118},
+        {"timestamp": "2026-08-01T10:03:01Z", "metric": "latency_ms", "service": "order-service", "value": 122},
+        {"timestamp": "2026-08-01T10:04:01Z", "metric": "latency_ms", "service": "order-service", "value": 121},
+        {"timestamp": "2026-08-01T10:05:01Z", "metric": "latency_ms", "service": "order-service", "value": 1250},
+    ]
+
+    result = preprocess_metrics(
+        samples,
+        bucket_seconds=60,
+        anomaly_method="zscore",
+        anomaly_threshold=2.0,
+    )
+
+    anomalies = [
+        item
+        for item in result
+        if item["anomaly"]
+    ]
+
+    assert len(anomalies) == 2
+
+    cpu_spikes = [
+        item
+        for item in anomalies
+        if item["metric"] == "cpu_usage"
+    ]
+
+    latency_spikes = [
+        item
+        for item in anomalies
+        if item["metric"] == "latency_ms"
+    ]
+
+    assert len(cpu_spikes) == 1
+    assert cpu_spikes[0]["value"] == 96
+    assert cpu_spikes[0]["z_score"] > 2.0
+
+    assert len(latency_spikes) == 1
+    assert latency_spikes[0]["value"] == 1250
+    assert latency_spikes[0]["z_score"] > 2.0
+
+def test_convert_counter_to_rates():
+    samples = [
+        {
+            "timestamp": "2026-08-01T10:00:00Z",
+            "metric": "requests_total",
+            "service": "order-service",
+            "value": 10,
+        },
+        {
+            "timestamp": "2026-08-01T10:00:10Z",
+            "metric": "requests_total",
+            "service": "order-service",
+            "value": 30,
+        },
+        {
+            "timestamp": "2026-08-01T10:00:20Z",
+            "metric": "requests_total",
+            "service": "order-service",
+            "value": 50,
+        },
+    ]
+
+    result = convert_counter_to_rates(samples)
+
+    assert len(result) == 2
+    assert result[0]["value"] == 2.0
+    assert result[1]["value"] == 2.0
+    assert result[0]["rate"] == 2.0
+    assert result[1]["rate"] == 2.0
+
+def test_convert_counter_to_rates_handles_reset():
+    samples = [
+        {
+            "timestamp": "2026-08-01T10:00:00Z",
+            "metric": "requests_total",
+            "service": "order-service",
+            "value": 90,
+        },
+        {
+            "timestamp": "2026-08-01T10:00:10Z",
+            "metric": "requests_total",
+            "service": "order-service",
+            "value": 100,
+        },
+        {
+            "timestamp": "2026-08-01T10:00:20Z",
+            "metric": "requests_total",
+            "service": "order-service",
+            "value": 5,
+        },
+    ]
+
+    result = convert_counter_to_rates(samples)
+
+    assert len(result) == 2
+    assert result[0]["value"] == 1.0
+    assert result[1]["value"] == 0.5

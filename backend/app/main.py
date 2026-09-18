@@ -1,7 +1,12 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Request, Query
 import os
 import json
 import time
+from datetime import datetime, timezone, timedelta
 import base64
 import urllib.request
 import urllib.parse
@@ -12,16 +17,36 @@ import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 from app.repository_connector import RepositoryConnector
 from app.ingestion import router as ingestion_router
-from app.storage import query_logs, query_metrics, query_traces
+from app.storage import query_logs, query_metrics, query_traces, query_average_request_latency
 from app.source_preprocessing import preprocess_source
+from app.metric_preprocessing import preprocess_metrics, detect_threshold_anomalies
 from app.feature_extraction import build_feature_bundle
 from app.embedding_generation import generate_incident_embedding
 from app.vector_store import search_similar_incidents
+from app.graph import graph
+from app.routers import incidents
+from app.routers import diagnosis
+from app.routers import feedback
+from app.routers import auth
+from app.routers import dashboard
+from app.exceptions import general_exception_handler
 
 repository_connector = RepositoryConnector()
 
 app = FastAPI(title="Adaptive MAS RCA API")
+
+app.add_exception_handler(
+    Exception,
+    general_exception_handler
+)
+
 app.include_router(ingestion_router)
+
+app.include_router(incidents.router)
+app.include_router(diagnosis.router)
+app.include_router(feedback.router)
+app.include_router(auth.router)
+app.include_router(dashboard.router)
 
 # ============================================================
 # CONFIGURATION
@@ -662,6 +687,96 @@ def read_logs():
 # INCIDENT FEATURE BUNDLE
 # ============================================================
 
+
+def prometheus_to_metric_samples(
+    metric_result,
+    service,
+):
+    """
+    Convert a Prometheus instant or range-query response
+    into flat metric samples expected by preprocess_metrics().
+    """
+
+    if not isinstance(metric_result, dict):
+        return []
+
+    data = metric_result.get("data", {})
+
+    if not isinstance(data, dict):
+        return []
+
+    results = data.get("result", [])
+
+    if not isinstance(results, list):
+        return []
+
+    samples = []
+
+    for result in results:
+
+        if not isinstance(result, dict):
+            continue
+
+        labels = result.get("metric", {})
+
+        if not isinstance(labels, dict):
+            labels = {}
+
+        metric_name = labels.get(
+            "__name__",
+            "unknown_metric",
+        )
+
+        # --------------------------------------------------
+        # Prometheus instant query
+        # --------------------------------------------------
+
+        value_data = result.get("value")
+
+        if (
+            isinstance(value_data, list)
+            and len(value_data) >= 2
+        ):
+            value_pairs = [value_data]
+
+        # --------------------------------------------------
+        # Prometheus range query
+        # --------------------------------------------------
+
+        else:
+            value_pairs = result.get("values", [])
+
+            if not isinstance(value_pairs, list):
+                continue
+
+        for pair in value_pairs:
+
+            if (
+                not isinstance(pair, list)
+                or len(pair) < 2
+            ):
+                continue
+
+            try:
+                timestamp = datetime.fromtimestamp(
+                    float(pair[0]),
+                    tz=timezone.utc,
+                ).isoformat()
+
+                value = float(pair[1])
+
+            except (TypeError, ValueError):
+                continue
+
+            samples.append({
+                "timestamp": timestamp,
+                "service": service,
+                "metric": metric_name,
+                "value": value,
+            })
+
+    return samples
+
 def build_incident_feature_bundle(
     incident_id,
     events,
@@ -697,8 +812,14 @@ def build_incident_feature_bundle(
 
     timestamps = sorted(timestamps)
 
-    start_time = timestamps[0] if timestamps else None
     end_time = timestamps[-1] if timestamps else None
+
+    if end_time:
+        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        start_dt = end_dt - timedelta(hours=1)
+        start_time = start_dt.isoformat()
+    else:
+        start_time = None
 
     # --------------------------------------------------------
     # Services involved in the incident
@@ -726,13 +847,91 @@ def build_incident_feature_bundle(
                 end_time=end_time,
             )
 
-            metrics.append({
-                "service": service,
-                "data": metric_result,
-            })
+            metric_samples = prometheus_to_metric_samples(
+                metric_result,
+                service,
+            )
+
+            processed_metrics = preprocess_metrics(
+                metric_samples,
+                anomaly_method="zscore",
+                anomaly_threshold=3.0,
+            )
+
+            processed_metrics = [
+                metric
+                for metric in processed_metrics
+                if metric.get("metric", "").startswith("flask_http_request_")
+            ]
+
+            metrics.extend(processed_metrics)
 
         except Exception:
             # A failed metrics query should not prevent RCA.
+            continue
+
+        # ----------------------------------------------------
+        # Application-level request latency
+        # ----------------------------------------------------
+
+        try:
+            latency_result = query_average_request_latency(
+                service=service,
+                window="5m",
+            )
+
+            latency_data = latency_result.get(
+                "data",
+                {},
+            )
+
+            latency_results = latency_data.get(
+                "result",
+                [],
+            )
+
+            if latency_results:
+                latency_value = latency_results[0].get(
+                    "value",
+                    [],
+                )
+
+                if (
+                    isinstance(latency_value, list)
+                    and len(latency_value) >= 2
+                ):
+                    try:
+                        latency_seconds = float(
+                            latency_value[1]
+                        )
+
+                        if latency_seconds >= 0:
+                            latency_samples = [
+                                {
+                                    "timestamp": datetime.now(
+                                        timezone.utc
+                                    ).isoformat(),
+                                    "service": service,
+                                    "metric": "request_latency_seconds",
+                                    "value": latency_seconds,
+                                    "unit": "seconds",
+                                }
+                            ]
+
+                            latency_samples = detect_threshold_anomalies(
+                                latency_samples,
+                                maximum=1.0,
+                            )
+
+                            metrics.extend(
+                                latency_samples
+                            )
+
+                    except (TypeError, ValueError):
+                        pass
+
+        except Exception:
+            # Application latency should not prevent RCA.
             continue
 
         try:
@@ -794,13 +993,18 @@ def build_incident_feature_bundle(
     # Build ONE compact bundle
     # --------------------------------------------------------
 
-    return build_feature_bundle(
+    feature_bundle = build_feature_bundle(
         incident_id=incident_id,
         logs=events,
         metrics=metrics,
         traces=traces,
         source=source,
     )
+
+    feature_bundle["_raw_traces"] = traces
+
+    return feature_bundle
+    
 
 
 def get_similar_historical_incidents(
@@ -885,6 +1089,22 @@ def analyze_with_llama(
         default=str
     )
 
+    metric_evidence = feature_bundle.get("features", {}).get("metrics", [])
+
+    metric_evidence_text = "\n".join(
+        f"- metric={m.get('metric')}, "
+        f"service={m.get('service')}, "
+        f"timestamp={m.get('timestamp')}, "
+        f"value={m.get('value')}, "
+        f"z_score={m.get('z_score')}, "
+        f"anomaly={m.get('anomaly')}"
+        for m in metric_evidence
+        if m.get("anomaly") is True
+    )
+
+    if not metric_evidence_text:
+        metric_evidence_text = "No anomalous metrics detected."
+
     historical_context = ""
 
     if similar_historical_incidents:
@@ -948,6 +1168,24 @@ IMPORTANT RCA RULES:
 11. Give higher priority to evidence from the current
     incident than historical similarity.
 
+12. Explicitly analyze the CURRENT INCIDENT metrics.
+
+13. Treat a metric as evidence only when it is marked
+    "anomaly": true.
+
+14. For each relevant metric anomaly, consider its
+    service, timestamp, value, and z_score.
+
+15. Correlate metric anomalies with log timestamps and
+    service failures. Do not treat correlation alone as
+    proof of root cause.
+
+16. In the Evidence section, explicitly mention the
+    relevant metric anomalies used in your reasoning.
+
+17. If metrics do not provide sufficient evidence for
+    the root cause, state that clearly.
+
 Return these sections:
 
 1. Incident
@@ -973,6 +1211,32 @@ CURRENT INCIDENT FEATURE BUNDLE
 
 {feature_text}
 
+============================================================
+EXPLICIT CURRENT METRIC EVIDENCE
+============================================================
+
+The following list contains ONLY metrics marked as anomaly=true.
+These are the authoritative current-incident metric anomalies.
+Do NOT replace them with values from logs or source code.
+
+{metric_evidence_text}
+
+============================================================
+EVIDENCE-FIRST INSTRUCTION
+============================================================
+
+Before writing the RCA:
+
+1. List the anomalous metrics from the current incident.
+2. For each metric, identify its service, timestamp,
+   value, and z_score.
+3. Compare those timestamps with the current incident logs.
+4. Explicitly explain whether each metric supports,
+   contradicts, or is unrelated to the suspected root cause.
+5. Do not recommend investigating a cause unless there is
+   supporting evidence in the current incident.
+6. If the current evidence identifies a root cause,
+   state it directly instead of asking for more information.
 
 ============================================================
 SIMILAR HISTORICAL INCIDENTS
@@ -1010,9 +1274,20 @@ contained in the CURRENT INCIDENT FEATURE BUNDLE.
 # ============================================================
 
 @app.post("/api/rca/analyze")
-def run_rca():
+def run_rca(
+    service: str = Query(None),
+    start_time: str = Query(None),
+    end_time: str = Query(None),
+):
 
-    events = read_logs()
+    if service and (start_time or end_time):
+        events = query_logs(
+            service=service,
+            start_time=start_time,
+            end_time=end_time,
+        )
+    else:
+        events = read_logs()
 
     if not events:
 
@@ -1022,9 +1297,48 @@ def run_rca():
         )
 
     feature_bundle = build_incident_feature_bundle(
-        incident_id="RCA-LIVE",
+        incident_id=(
+            f"{service}:{start_time}:{end_time}"
+            if service and start_time and end_time
+            else "RCA-LIVE"
+        ),        
         events=events,
     )
+
+    # ADD THE NEW CODE HERE
+    features = feature_bundle.get("features", {})
+
+    recent_commits = []
+
+    for affected_service in sorted({
+        event.get("service")
+        for event in events
+        if event.get("service")
+    }):
+        try:
+            commits = repository_connector.get_recent_commits(
+                affected_service,
+                limit=5,
+            )
+
+            if isinstance(commits, list):
+                recent_commits.extend(commits)
+
+        except Exception:
+            continue
+
+    graph_inputs = {
+        "raw_inputs": {
+            "logs": features.get("logs", []),
+            "metric_anomalies": features.get("metrics", []),
+            "trace": feature_bundle.get("_raw_traces", []),
+            "source_snippets": features.get("source", []),
+            "recent_commits": recent_commits,
+            "incident_start": start_time or "",
+            "incident_end": end_time or "",
+        },
+        "agent_outputs": {},
+    }
 
     similar_historical_incidents = get_similar_historical_incidents(
         feature_bundle,
@@ -1048,9 +1362,11 @@ def run_rca():
 
     try:
 
-        result = analyze_with_llama(
-            feature_bundle,
-            similar_historical_incidents,
+        graph_result = graph.invoke(graph_inputs)
+
+        result = graph_result.get(
+            "agent_outputs",
+            {}
         )
 
     except Exception as e:
@@ -2468,3 +2784,12 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000
     )
+
+
+
+
+
+
+
+
+

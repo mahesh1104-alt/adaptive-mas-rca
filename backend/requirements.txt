@@ -79,8 +79,14 @@ urllib3==2.7.0
 uvicorn==0.52.0
 watchfiles==1.2.0
 websocket-client==1.9.0
-websockets==17.0.1
+websockets>=14,<17
 yarl==1.24.5
 neo4j==6.3.0
 langchain==1.4.0
 langgraph==1.2.11
+sentence-transformers
+SQLAlchemy==2.0.54
+alembic==1.20.0
+bcrypt
+PyJWT
+email-validator
