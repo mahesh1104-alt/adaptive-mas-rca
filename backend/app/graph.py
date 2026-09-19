@@ -15,6 +15,7 @@ from app.agents.validation_agent import ValidationAgent
 from app.ollama_adapter import ollama_llm
 from app.trace_analysis_agent import TraceAnalysisAgent
 from app.trace_preprocessing import preprocess_trace
+from app.diagnosis_events import publish_event
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class TraceLLMAdapter:
 
 
 class GraphState(TypedDict, total=False):
+    job_id: str
     raw_inputs: dict[str, Any]
 
     # Parallel branches return only their own dictionary entry.
@@ -79,66 +81,159 @@ def build_graph(
 
     
     def log_node(state: GraphState):
+        job_id = state.get("job_id")
+
         try:
             result = log_agent.run(
                 {"raw_inputs": state.get("raw_inputs", {})}
             )
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="log_analysis_agent",
+                status="completed",
+                confidence=result.get("confidence", 0.0)
+                if isinstance(result, dict)
+                else 0.0,
+                summary=(
+                    result.get("summary")
+                    if isinstance(result, dict)
+                    else None
+                ),
+            )
+
             return {
                 "agent_outputs": {
                     "log_analysis_agent": result
                 }
             }
+
         except Exception as error:
+            fallback = fallback_output(
+                "log_analysis_agent",
+                error,
+            )
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="log_analysis_agent",
+                status="failed",
+                error=str(error),
+            )
+
             return {
                 "agent_outputs": {
-                    "log_analysis_agent": fallback_output(
-                        "log_analysis_agent",
-                        error,
-                    )
+                    "log_analysis_agent": fallback
                 }
             }
 
     def metrics_node(state: GraphState):
+        job_id = state.get("job_id")
+
         try:
             result = metrics_agent.run(
                 {"raw_inputs": state.get("raw_inputs", {})}
             )
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="metrics_analysis_agent",
+                status="completed",
+                confidence=result.get("confidence", 0.0)
+                if isinstance(result, dict)
+                else 0.0,
+                summary=(
+                    result.get("summary")
+                    if isinstance(result, dict)
+                    else result.get("hypothesis")
+                    if isinstance(result, dict)
+                    else None
+                ),
+            )
+
             return {
                 "agent_outputs": {
                     "metrics_analysis_agent": result
                 }
             }
+
         except Exception as error:
+            fallback = fallback_output(
+                "metrics_analysis_agent",
+                error,
+            )
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="metrics_analysis_agent",
+                status="failed",
+                error=str(error),
+            )
+
             return {
                 "agent_outputs": {
-                    "metrics_analysis_agent": fallback_output(
-                        "metrics_analysis_agent",
-                        error,
-                    )
+                    "metrics_analysis_agent": fallback
                 }
             }
 
     def source_node(state: GraphState):
+        job_id = state.get("job_id")
+
         try:
             result = source_agent.run(
                 {"raw_inputs": state.get("raw_inputs", {})}
             )
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="source_code_analysis_agent",
+                status="completed",
+                confidence=result.get("confidence", 0.0)
+                if isinstance(result, dict)
+                else 0.0,
+                summary=(
+                    result.get("summary")
+                    if isinstance(result, dict)
+                    else result.get("explanation")
+                    if isinstance(result, dict)
+                    else None
+                ),
+            )
+
             return {
                 "agent_outputs": {
                     "source_code_analysis_agent": result
                 }
             }
+
         except Exception as error:
+            fallback = fallback_output(
+                "source_code_analysis_agent",
+                error,
+            )
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="source_code_analysis_agent",
+                status="failed",
+                error=str(error),
+            )
+
             return {
                 "agent_outputs": {
-                    "source_code_analysis_agent": fallback_output(
-                        "source_code_analysis_agent",
-                        error,
-                    )
+                    "source_code_analysis_agent": fallback
                 }
             }
 
     def trace_node(state: GraphState):
+        job_id = state.get("job_id")
+
         try:
             raw_inputs = state.get("raw_inputs", {})
             trace_input = raw_inputs.get("trace")
@@ -151,43 +246,96 @@ def build_graph(
             trace_summary = preprocess_trace(trace_input)
             result = trace_agent.analyze(trace_summary)
 
+            result_dict = result.model_dump()
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="trace_analysis_agent",
+                status="completed",
+                confidence=result_dict.get(
+                    "confidence",
+                    0.0,
+                ),
+                summary=result_dict.get("summary"),
+            )
+
             return {
                 "agent_outputs": {
-                    "trace_analysis_agent": result.model_dump()
+                    "trace_analysis_agent": result_dict
                 }
             }
 
         except Exception as error:
+            fallback = fallback_output(
+                "trace_analysis_agent",
+                error,
+            )
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="trace_analysis_agent",
+                status="failed",
+                error=str(error),
+            )
+
             return {
                 "agent_outputs": {
-                    "trace_analysis_agent": fallback_output(
-                        "trace_analysis_agent",
-                        error,
-                    )
+                    "trace_analysis_agent": fallback
                 }
             }
-
     def knowledge_node(state: GraphState):
+        job_id = state.get("job_id")
+
         try:
             result = knowledge_agent.run(
                 {"raw_inputs": state.get("raw_inputs", {})}
             )
+
+            result_dict = result.model_dump()
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="knowledge_retrieval_agent",
+                status="completed",
+                confidence=result_dict.get(
+                    "confidence",
+                    0.0,
+                ),
+                summary=result_dict.get("summary"),
+            )
+
             return {
                 "agent_outputs": {
-                    "knowledge_retrieval_agent": result.model_dump()
+                    "knowledge_retrieval_agent": result_dict
                 }
             }
+
         except Exception as error:
+            fallback = fallback_output(
+                "knowledge_retrieval_agent",
+                error,
+            )
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="knowledge_retrieval_agent",
+                status="failed",
+                error=str(error),
+            )
+
             return {
                 "agent_outputs": {
-                    "knowledge_retrieval_agent": fallback_output(
-                        "knowledge_retrieval_agent",
-                        error,
-                    )
+                    "knowledge_retrieval_agent": fallback
                 }
             }
 
     def reasoning_node(state: GraphState):
+        job_id = state.get("job_id")
+
         try:
             raw_inputs = state.get("raw_inputs", {})
             agent_outputs = state.get("agent_outputs", {})
@@ -199,9 +347,23 @@ def build_graph(
                 }
             )
 
+            result_dict = result.model_dump()
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="reasoning_agent",
+                status="completed",
+                confidence=result_dict.get(
+                    "confidence",
+                    0.0,
+                ),
+                summary=result_dict.get("summary"),
+            )
+
             return {
                 "agent_outputs": {
-                    "reasoning_agent": result.model_dump()
+                    "reasoning_agent": result_dict
                 }
             }
 
@@ -226,12 +388,22 @@ def build_graph(
                 "requires_human_review": True,
             }
 
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="reasoning_agent",
+                status="failed",
+                error=str(error),
+            )
+
             return {
                 "agent_outputs": {
                     "reasoning_agent": fallback
                 }
             }
     def validation_node(state: GraphState):
+        job_id = state.get("job_id")
+
         try:
             raw_inputs = state.get("raw_inputs", {})
             agent_outputs = state.get("agent_outputs", {})
@@ -243,9 +415,23 @@ def build_graph(
                 }
             )
 
+            result_dict = result.model_dump()
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="validation_agent",
+                status="completed",
+                confidence=result_dict.get(
+                    "confidence",
+                    0.0,
+                ),
+                summary=result_dict.get("summary"),
+            )
+
             return {
                 "agent_outputs": {
-                    "validation_agent": result.model_dump()
+                    "validation_agent": result_dict
                 }
             }
 
@@ -263,6 +449,14 @@ def build_graph(
                     "requires human review."
                 ),
             }
+
+            publish_event(
+                job_id,
+                "agent_completed",
+                agent="validation_agent",
+                status="failed",
+                error=str(error),
+            )
 
             return {
                 "agent_outputs": {

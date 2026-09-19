@@ -21,8 +21,16 @@ class DiagnosisRequest(BaseModel):
     source: str | None = Field(default=None, max_length=100)
 
 
-class DiagnosisResponse(BaseModel):
+class DiagnosisAcceptedResponse(BaseModel):
+    status: str
+    job_id: str
+    incident_id: uuid.UUID
+
+
+class DiagnosisJobResponse(BaseModel):
+    job_id: str
     status: str
     incident_id: uuid.UUID
-    report: dict[str, Any]
-    agent_outputs: dict[str, Any]
+    report: dict[str, Any] | None = None
+    agent_outputs: dict[str, Any] | None = None
+    error: str | None = None
