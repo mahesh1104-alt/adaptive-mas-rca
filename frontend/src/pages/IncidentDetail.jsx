@@ -460,7 +460,17 @@ function IncidentDetail() {
             No RCA report is available for this incident yet.
           </p>
         )}
-
+        
+        {incident?.agent_output_ids?.reasoning_agent && (
+          <div className="feedback-action">
+            <Link
+              className="feedback-button"
+              to={`/feedback?outputId=${incident.agent_output_ids.reasoning_agent}`}
+            >
+              Submit Feedback
+            </Link>
+          </div>
+        )}
         <h3>Agent Outputs</h3>
 
         {Object.keys(agentOutputs).length > 0 ? (

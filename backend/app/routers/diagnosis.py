@@ -741,8 +741,10 @@ def get_incident_diagnosis(
     )
 
     agent_outputs: dict[str, Any] = {}
+    agent_output_ids: dict[str, uuid.UUID] = {}
 
     for output in outputs:
+        agent_output_ids[output.agent_name] = output.output_id
         parsed_output: dict[str, Any] | None = None
 
         if output.reasoning:
@@ -781,4 +783,5 @@ def get_incident_diagnosis(
         "incident_id": incident.incident_id,
         "report": report,
         "agent_outputs": agent_outputs,
+        "agent_output_ids": agent_output_ids,
     }

@@ -38,3 +38,4 @@ class DiagnosisIncidentResponse(BaseModel):
     incident_id: uuid.UUID
     report: dict[str, Any] | None = None
     agent_outputs: dict[str, Any] | None = None
+    agent_output_ids: dict[str, uuid.UUID] | None = None
