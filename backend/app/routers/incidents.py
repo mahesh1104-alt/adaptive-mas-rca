@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Incident, User
-from app.dependencies import get_db_session
+from app.dependencies import get_db_session, require_engineer
 from app.models.incidents import (
     IncidentCreate,
     IncidentResponse,
@@ -71,9 +71,11 @@ def create_incident(
 )
 def list_incidents(
     db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_engineer),
 ):
     statement = (
         select(Incident)
+        .where(Incident.user_id == current_user.user_id)
         .order_by(Incident.created_at.desc())
     )
 

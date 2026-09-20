@@ -45,6 +45,7 @@ from app.models.diagnosis import (
     DiagnosisAcceptedResponse,
     DiagnosisJobResponse,
     DiagnosisRequest,
+    DiagnosisIncidentResponse,
 )
 from app.security import decode_access_token
 
@@ -707,3 +708,77 @@ async def diagnosis_websocket(
             job_id,
             event_queue,
         )
+
+@router.get(
+    "/incidents/{incident_id}",
+    response_model=DiagnosisIncidentResponse,
+)
+def get_incident_diagnosis(
+    incident_id: uuid.UUID,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_engineer),
+):
+    incident = (
+        db.query(Incident)
+        .filter(
+            Incident.incident_id == incident_id,
+            Incident.user_id == current_user.user_id,
+        )
+        .first()
+    )
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    outputs = (
+        db.query(AgentOutput)
+        .filter(AgentOutput.incident_id == incident_id)
+        .order_by(AgentOutput.created_at.asc())
+        .all()
+    )
+
+    agent_outputs: dict[str, Any] = {}
+
+    for output in outputs:
+        parsed_output: dict[str, Any] | None = None
+
+        if output.reasoning:
+            try:
+                parsed = json.loads(output.reasoning)
+                if isinstance(parsed, dict):
+                    parsed_output = parsed
+            except (json.JSONDecodeError, TypeError):
+                parsed_output = None
+
+        if parsed_output is None:
+            parsed_output = {
+                "summary": output.diagnosis,
+                "confidence": None,
+                "metadata": {
+                    "recommended_actions": output.recommendation,
+                },
+            }
+
+        agent_outputs[output.agent_name] = parsed_output
+
+    report = None
+
+    reasoning_output = agent_outputs.get("reasoning_agent")
+
+    if isinstance(reasoning_output, dict):
+        metadata = reasoning_output.get("metadata")
+
+        if isinstance(metadata, dict):
+            final_report = metadata.get("final_report")
+
+            if isinstance(final_report, dict):
+                report = final_report
+
+    return {
+        "incident_id": incident.incident_id,
+        "report": report,
+        "agent_outputs": agent_outputs,
+    }
