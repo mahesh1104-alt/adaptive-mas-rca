@@ -7,3 +7,5 @@ logs/rca_result.txt
 
 # ChromaDB generated data
 backend/chroma_data/
+
+coverage/

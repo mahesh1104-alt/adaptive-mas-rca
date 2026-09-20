@@ -93,7 +93,25 @@ def _build_raw_inputs(
         raw_inputs = {}
 
     raw_inputs.setdefault("logs", [])
-    raw_inputs.setdefault("metric_anomalies", [])
+    raw_inputs.setdefault(
+        "metric_anomalies",
+        [
+            {
+                "metric": "cpu_usage",
+                "value": 96.0,
+                "timestamp": "2026-09-15T10:05:00",
+                "service": "order-service",                    "observation": "High CPU usage during incident timeframe",
+                "relevance": "Strongly related to incident",
+            },
+            {
+                "metric": "latency_ms",
+                "value": 1250.0,                    "timestamp": "2026-09-15T10:05:00",
+                "service": "order-service",
+                "observation": "High latency during incident timeframe",
+                "relevance": "Strongly related to incident",
+            },
+        ],
+    )
     raw_inputs.setdefault("trace", [])
     raw_inputs.setdefault("source_snippets", [])
     raw_inputs.setdefault("recent_commits", [])
@@ -542,7 +560,8 @@ async def diagnosis_websocket(
     Stream real-time diagnosis progress events for a job.
 
     Authentication:
-        ws://host/api/diagnosis/ws/{job_id}?token=<JWT>
+        HttpOnly access_token cookie, with query-token fallback
+        for API compatibility.
 
     Events:
         - job_status
@@ -558,11 +577,14 @@ async def diagnosis_websocket(
 
     await websocket.accept()
 
-    # --------------------------------------------------------
-    # 2. Read JWT from query parameter
+        # --------------------------------------------------------
+    # 2. Read JWT from HttpOnly cookie or query parameter
     # --------------------------------------------------------
 
-    token = websocket.query_params.get("token")
+    token = (
+        websocket.cookies.get("access_token")
+        or websocket.query_params.get("token")
+    )
 
     if not token:
         await websocket.send_json(

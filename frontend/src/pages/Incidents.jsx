@@ -18,14 +18,10 @@ function Incidents() {
       setError('')
 
       try {
-        const token = localStorage.getItem('access_token')
-
         const response = await axios.get(
           'http://localhost:8000/api/incidents',
           {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+            withCredentials: true,
           },
         )
 
@@ -119,6 +115,7 @@ function Incidents() {
         <div className="incident-toolbar">
           <div className="filter-group">
             <label htmlFor="status-filter">Status</label>
+
             <select
               id="status-filter"
               value={statusFilter}
@@ -134,6 +131,7 @@ function Incidents() {
 
           <div className="filter-group">
             <label htmlFor="service-filter">Service</label>
+
             <select
               id="service-filter"
               value={serviceFilter}
@@ -149,20 +147,27 @@ function Incidents() {
         </div>
 
         {loading && (
-          <div className="table-message">
+          <div className="page-loading">
             Loading incidents...
           </div>
         )}
 
         {!loading && error && (
-          <div className="error-message">
-            {error}
+          <div className="error-state">
+            <strong>Unable to load incidents</strong>
+            <span>{error}</span>
           </div>
         )}
 
         {!loading && !error && filteredIncidents.length === 0 && (
-          <div className="table-message">
-            No incidents found for the selected filters.
+          <div className="empty-state">
+            <h3>No incidents found</h3>
+
+            <p>
+              There are no incidents matching the selected status and
+              service filters. Try changing the filters or create a
+              new incident.
+            </p>
           </div>
         )}
 

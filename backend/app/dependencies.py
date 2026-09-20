@@ -2,7 +2,7 @@ import os
 import uuid
 
 import psycopg2
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -91,20 +91,33 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(
         bearer_scheme
     ),
+    access_token: str | None = Cookie(
+        default=None,
+        alias="access_token",
+    ),
     db: Session = Depends(get_db_session),
 ) -> User:
     """
-    Validate the JWT bearer token and return the authenticated user.
+    Validate the JWT from either:
+
+    1. Secure HttpOnly access_token cookie, or
+    2. Authorization: Bearer <token> header.
+
+    Cookie authentication is preferred for the browser UI.
+    Bearer authentication is retained for API compatibility.
     """
 
-    if credentials is None:
+    token = access_token
+
+    if not token and credentials is not None:
+        token = credentials.credentials
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    token = credentials.credentials
 
     try:
         payload = decode_access_token(token)

@@ -1,8 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Response,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.dependencies import get_db_session
+from app.dependencies import (
+    get_db_session,
+    get_current_user,
+)
 from app.db.models import User
 from app.models.auth import (
     RegisterRequest,
@@ -11,9 +20,9 @@ from app.models.auth import (
     CurrentUserResponse,
 )
 from app.security import (
-    hash_password,
-    verify_password,
+    JWT_EXPIRE_MINUTES,
     create_access_token,
+    verify_password,
 )
 
 
@@ -84,6 +93,7 @@ def register(
 )
 def login(
     payload: LoginRequest,
+    response: Response,
     db: Session = Depends(get_db_session),
 ):
     user = db.scalar(
@@ -119,6 +129,16 @@ def login(
         role=user.role,
     )
 
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=JWT_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+
     return TokenResponse(
         access_token=access_token,
         token_type="bearer",
@@ -126,3 +146,33 @@ def login(
         username=user.username,
         role=user.role,
     )
+
+# ============================================================
+# Current authenticated user
+# ============================================================
+
+@router.get(
+    "/me",
+    response_model=CurrentUserResponse,
+)
+def current_user(
+    current_user: User = Depends(get_current_user),
+):
+    return current_user
+
+
+# ============================================================
+# Logout
+# ============================================================
+
+@router.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+    )
+
+    return {
+        "status": "success",
+        "message": "Logged out successfully",
+    }

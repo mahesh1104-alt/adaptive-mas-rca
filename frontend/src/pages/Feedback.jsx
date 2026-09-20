@@ -3,7 +3,8 @@ import axios from 'axios'
 
 function Feedback() {
   const [outputId, setOutputId] = useState(
-    () => new URLSearchParams(window.location.search).get('outputId') || '',
+    () =>
+      new URLSearchParams(window.location.search).get('outputId') || '',
   )
   const [isCorrect, setIsCorrect] = useState('')
   const [rating, setRating] = useState('')
@@ -20,11 +21,14 @@ function Feedback() {
     setErrorMessage('')
 
     try {
-      const token = localStorage.getItem('access_token')
-      const user = JSON.parse(localStorage.getItem('user') || '{}')
+      const user = JSON.parse(
+        localStorage.getItem('user') || '{}',
+      )
 
-      if (!token || !user.user_id) {
-        setErrorMessage('Your session has expired. Please log in again.')
+      if (!user.user_id) {
+        setErrorMessage(
+          'Your session has expired. Please log in again.',
+        )
         return
       }
 
@@ -38,14 +42,13 @@ function Feedback() {
           comments: comments.trim() || null,
         },
         {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          withCredentials: true,
         },
       )
 
       setSuccessMessage(
-        response.data.message || 'Feedback submitted successfully.',
+        response.data.message ||
+          'Feedback submitted successfully.',
       )
 
       setIsCorrect('')
@@ -53,7 +56,9 @@ function Feedback() {
       setComments('')
     } catch (requestError) {
       if (requestError.response?.status === 401) {
-        setErrorMessage('Your session has expired. Please log in again.')
+        setErrorMessage(
+          'Your session has expired. Please log in again.',
+        )
       } else {
         setErrorMessage(
           requestError.response?.data?.detail ||
@@ -64,6 +69,9 @@ function Feedback() {
       setSubmitting(false)
     }
   }
+
+  const outputIdFromUrl =
+    new URLSearchParams(window.location.search).get('outputId')
 
   return (
     <section>
@@ -78,11 +86,15 @@ function Feedback() {
         <h3>Diagnosis Feedback</h3>
 
         <p>
-          Tell us whether the reported diagnosis was correct and add any
-          additional information that can help improve future RCA results.
+          Tell us whether the reported diagnosis was correct and add
+          any additional information that can help improve future RCA
+          results.
         </p>
 
-        <form className="feedback-form" onSubmit={submitFeedback}>
+        <form
+          className="feedback-form"
+          onSubmit={submitFeedback}
+        >
           <label htmlFor="output-id">
             Agent Output ID
           </label>
@@ -93,9 +105,7 @@ function Feedback() {
             value={outputId}
             onChange={(event) => setOutputId(event.target.value)}
             placeholder="Enter the agent output ID"
-            readOnly={Boolean(
-              new URLSearchParams(window.location.search).get('outputId'),
-            )}
+            readOnly={Boolean(outputIdFromUrl)}
             required
           />
 
@@ -105,7 +115,9 @@ function Feedback() {
             </span>
           )}
 
-          <label>Was the reported root cause correct?</label>
+          <label>
+            Was the reported root cause correct?
+          </label>
 
           <div className="feedback-choice-group">
             <label className="feedback-choice">
@@ -114,9 +126,12 @@ function Feedback() {
                 name="isCorrect"
                 value="true"
                 checked={isCorrect === 'true'}
-                onChange={(event) => setIsCorrect(event.target.value)}
+                onChange={(event) =>
+                  setIsCorrect(event.target.value)
+                }
                 required
               />
+
               Correct
             </label>
 
@@ -126,8 +141,11 @@ function Feedback() {
                 name="isCorrect"
                 value="false"
                 checked={isCorrect === 'false'}
-                onChange={(event) => setIsCorrect(event.target.value)}
+                onChange={(event) =>
+                  setIsCorrect(event.target.value)
+                }
               />
+
               Incorrect
             </label>
           </div>
@@ -157,8 +175,13 @@ function Feedback() {
             rows={6}
           />
 
-          <button type="submit" disabled={submitting}>
-            {submitting ? 'Submitting...' : 'Submit Feedback'}
+          <button
+            type="submit"
+            disabled={submitting}
+          >
+            {submitting
+              ? 'Submitting...'
+              : 'Submit Feedback'}
           </button>
         </form>
 
@@ -169,8 +192,9 @@ function Feedback() {
         )}
 
         {errorMessage && (
-          <div className="error-message">
-            {errorMessage}
+          <div className="error-state">
+            <strong>Feedback could not be submitted</strong>
+            <span>{errorMessage}</span>
           </div>
         )}
       </div>

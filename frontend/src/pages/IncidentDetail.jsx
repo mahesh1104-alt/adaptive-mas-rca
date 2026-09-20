@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import axios from 'axios'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 const AGENTS = [
   {
@@ -63,14 +72,10 @@ function IncidentDetail() {
       setError('')
 
       try {
-        const token = localStorage.getItem('access_token')
-
         const response = await axios.get(
           `http://localhost:8000/api/diagnosis/incidents/${incidentId}`,
           {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+            withCredentials: true,
           },
         )
 
@@ -96,16 +101,10 @@ function IncidentDetail() {
       return undefined
     }
 
-    const token = localStorage.getItem('access_token')
-
-    if (!token) {
-      setDiagnosisError('Your session has expired. Please log in again.')
-      setDiagnosisRunning(false)
-      return undefined
-    }
-
+    // The browser automatically sends the HttpOnly access_token
+    // cookie during the WebSocket handshake.
     const socket = new WebSocket(
-      `ws://localhost:8000/api/diagnosis/ws/${jobId}?token=${encodeURIComponent(token)}`,
+      `ws://localhost:8000/api/diagnosis/ws/${jobId}`,
     )
 
     socket.onmessage = (messageEvent) => {
@@ -162,7 +161,6 @@ function IncidentDetail() {
               }
             }
 
-            // Only one agent should be running at a time.
             Object.keys(next).forEach((agentKey) => {
               if (next[agentKey].status === 'running') {
                 next[agentKey] = {
@@ -172,7 +170,6 @@ function IncidentDetail() {
               }
             })
 
-            // Make the first remaining pending agent the active one.
             const nextPendingAgent = AGENTS.find(
               (agent) => next[agent.key].status === 'pending',
             )
@@ -247,14 +244,10 @@ function IncidentDetail() {
 
   const fetchIncidentDetails = async () => {
     try {
-      const token = localStorage.getItem('access_token')
-
       const response = await axios.get(
         `http://localhost:8000/api/diagnosis/incidents/${incidentId}`,
         {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          withCredentials: true,
         },
       )
 
@@ -271,17 +264,13 @@ function IncidentDetail() {
     setProgress(createInitialProgress)
 
     try {
-      const token = localStorage.getItem('access_token')
-
       const response = await axios.post(
         'http://localhost:8000/api/diagnosis',
         {
           incident_id: incidentId,
         },
         {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          withCredentials: true,
         },
       )
 
@@ -316,7 +305,7 @@ function IncidentDetail() {
         </div>
 
         <div className="content-card">
-          <div className="table-message">
+          <div className="page-loading">
             Loading incident details...
           </div>
         </div>
@@ -335,8 +324,9 @@ function IncidentDetail() {
         </div>
 
         <div className="content-card">
-          <div className="error-message">
-            {error}
+          <div className="error-state">
+            <strong>Unable to load incident</strong>
+            <span>{error}</span>
           </div>
 
           <Link className="demo-link" to="/incidents">
@@ -349,6 +339,42 @@ function IncidentDetail() {
 
   const report = incident?.report
   const agentOutputs = incident?.agent_outputs || {}
+
+  const agentContributionData = AGENTS.map((agent) => {
+    const output = agentOutputs[agent.key]
+    const progressData = progress[agent.key]
+
+    const contribution =
+      output?.contribution_weight ??
+      output?.contribution ??
+      output?.weight ??
+      output?.confidence ??
+      progressData?.confidence ??
+      0
+
+    return {
+      name: agent.label.replace(' Agent', ''),
+      weight: Number(contribution),
+    }
+  })
+
+  const metricFindings =
+    agentOutputs.metrics_analysis_agent?.findings || []
+
+  const metricAnomalyData = metricFindings
+    .filter(
+      (finding) =>
+        finding.timestamp && finding.value != null,
+    )
+    .map((finding) => ({
+      timestamp: new Date(
+        finding.timestamp,
+      ).toLocaleTimeString(),
+      value: Number(finding.value),
+      metric: finding.metric,
+      service: finding.service,
+      observation: finding.observation,
+    }))
 
   const completedCount = AGENTS.filter(
     (agent) => progress[agent.key].status === 'done',
@@ -365,6 +391,7 @@ function IncidentDetail() {
 
       <div className="content-card">
         <h3>Incident ID</h3>
+
         <p className="incident-id">
           {incident?.incident_id}
         </p>
@@ -422,8 +449,9 @@ function IncidentDetail() {
           </div>
 
           {diagnosisError && (
-            <div className="error-message">
-              {diagnosisError}
+            <div className="error-state">
+              <strong>Diagnosis update</strong>
+              <span>{diagnosisError}</span>
             </div>
           )}
         </div>
@@ -437,14 +465,151 @@ function IncidentDetail() {
               {report.root_cause || '--'}
             </p>
 
-            <p>
-              <strong>Confidence:</strong>{' '}
-              {report.confidence ?? '--'}
-            </p>
+            <div className="confidence-section">
+              <strong>Confidence</strong>
 
+              <div className="confidence-chart">
+                <ResponsiveContainer
+                  width="100%"
+                  height={80}
+                >
+                  <BarChart
+                    data={[
+                      {
+                        name: 'Confidence',
+                        value:
+                          Number(
+                            report.confidence ?? 0,
+                          ) * 100,
+                      },
+                    ]}
+                    layout="vertical"
+                    margin={{
+                      top: 10,
+                      right: 20,
+                      left: 10,
+                      bottom: 10,
+                    }}
+                  >
+                    <XAxis
+                      type="number"
+                      domain={[0, 100]}
+                      tickFormatter={(value) =>
+                        `${value}%`
+                      }
+                    />
+
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      hide
+                    />
+
+                    <Tooltip
+                      formatter={(value) =>
+                        `${Number(value).toFixed(1)}%`
+                      }
+                    />
+
+                    <Bar
+                      dataKey="value"
+                      name="Confidence"
+                      fill="#4f46e5"
+                      radius={[0, 6, 6, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="confidence-value">
+                {(
+                  Number(report.confidence ?? 0) * 100
+                ).toFixed(1)}
+                %
+              </div>
+            </div>
+
+            <div className="agent-contribution-section">
+              <h4>Agent Contribution Weights</h4>
+
+              <ResponsiveContainer
+                width="100%"
+                height={280}
+              >
+                <BarChart
+                  data={agentContributionData}
+                  layout="vertical"
+                  margin={{
+                    top: 10,
+                    right: 20,
+                    left: 20,
+                    bottom: 10,
+                  }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+
+                  <XAxis
+                    type="number"
+                    domain={[0, 1]}
+                    tickFormatter={(value) =>
+                      Number(value).toFixed(1)
+                    }
+                  />
+
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={150}
+                  />
+
+                  <Tooltip
+                    formatter={(value) =>
+                      Number(value).toFixed(3)
+                    }
+                  />
+
+                  <Bar
+                    dataKey="weight"
+                    name="Contribution Weight"
+                    fill="#6366f1"
+                    radius={[0, 6, 6, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {metricAnomalyData.length > 0 && (
+              <div className="metric-anomaly-section">
+                <h4>Metric Anomalies</h4>
+
+                <div className="metric-anomaly-list">
+                  {metricAnomalyData.map((item, index) => (
+                    <div
+                      className="metric-anomaly-item"
+                      key={`${item.metric}-${item.timestamp}-${index}`}
+                    >
+                      <strong>{item.metric}</strong>
+
+                      <span>
+                        {item.service} · {item.timestamp} · Value: {item.value}
+                      </span>
+
+                      {item.observation && <p>{item.observation}</p>}
+
+                      {item.relevance && (
+                        <p>
+                          <strong>Relevance:</strong> {item.relevance}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {report.supporting_evidence && (
               <>
                 <h4>Supporting Evidence</h4>
+
                 <pre className="diagnosis-output">
                   {JSON.stringify(
                     report.supporting_evidence,
@@ -456,11 +621,16 @@ function IncidentDetail() {
             )}
           </div>
         ) : (
-          <p>
-            No RCA report is available for this incident yet.
-          </p>
+          <div className="empty-state">
+            <h3>No RCA report yet</h3>
+
+            <p>
+              Run a diagnosis for this incident to generate
+              the root-cause analysis report.
+            </p>
+          </div>
         )}
-        
+
         {incident?.agent_output_ids?.reasoning_agent && (
           <div className="feedback-action">
             <Link
@@ -471,19 +641,32 @@ function IncidentDetail() {
             </Link>
           </div>
         )}
+
         <h3>Agent Outputs</h3>
 
         {Object.keys(agentOutputs).length > 0 ? (
           <pre className="diagnosis-output">
-            {JSON.stringify(agentOutputs, null, 2)}
+            {JSON.stringify(
+              agentOutputs,
+              null,
+              2,
+            )}
           </pre>
         ) : (
-          <p>
-            No agent outputs are available for this incident yet.
-          </p>
+          <div className="empty-state">
+            <h3>No agent outputs available</h3>
+
+            <p>
+              Agent results will appear here after a diagnosis
+              has been executed.
+            </p>
+          </div>
         )}
 
-        <Link className="demo-link" to="/incidents">
+        <Link
+          className="demo-link"
+          to="/incidents"
+        >
           Back to incidents
         </Link>
       </div>

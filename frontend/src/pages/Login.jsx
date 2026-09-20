@@ -24,11 +24,13 @@ function Login() {
           email,
           password,
         },
+        {
+          withCredentials: true,
+        },
       )
 
       const data = response.data
 
-      localStorage.setItem('access_token', data.access_token)
       localStorage.setItem(
         'user',
         JSON.stringify({
@@ -92,3 +94,5 @@ function Login() {
 }
 
 export default Login
+
+

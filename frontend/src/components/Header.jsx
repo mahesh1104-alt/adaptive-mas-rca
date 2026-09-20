@@ -1,12 +1,21 @@
 import { useNavigate } from 'react-router-dom'
-
+import axios from 'axios'
 function Header() {
   const navigate = useNavigate()
 
-  const handleLogout = () => {
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user')
-    navigate('/login', { replace: true })
+  const handleLogout = async () => {
+    try {
+      await axios.post(
+        'http://localhost:8000/api/auth/logout',
+        {},
+        {
+          withCredentials: true,
+        },
+      )
+    } finally {
+      localStorage.removeItem('user')
+      navigate('/login', { replace: true })
+    }
   }
 
   const storedUser = localStorage.getItem('user')
@@ -39,3 +48,5 @@ function Header() {
 }
 
 export default Header
+
+
