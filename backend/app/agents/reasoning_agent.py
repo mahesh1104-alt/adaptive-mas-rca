@@ -189,10 +189,12 @@ ORIGINAL TASK:
     def run(self, state: dict[str, Any]) -> AgentOutput:
         raw_inputs = state.get("raw_inputs", {})
         agent_outputs = state.get("agent_outputs", {})
+        agent_weights = state.get("agent_weights", {})
 
         prompt = self._build_prompt(
             raw_inputs,
             agent_outputs,
+            agent_weights,
         )
 
         # --------------------------------------------------------------
@@ -1121,7 +1123,17 @@ ORIGINAL TASK:
         self,
         raw_inputs: dict[str, Any],
         agent_outputs: dict[str, Any],
+        agent_weights: dict[str, float] | None = None,
     ) -> str:
+        agent_weights = agent_weights or {}
+
+        weighted_agent_findings = {}
+
+        for agent_name, output in agent_outputs.items():
+            weighted_agent_findings[agent_name] = {
+                "trust_weight": agent_weights.get(agent_name, 1.0),
+                "findings": output,
+            }
         return f"""
 You are the Reasoning Agent in a distributed-system
 Root Cause Analysis pipeline.
@@ -1216,9 +1228,19 @@ CURRENT INCIDENT INPUTS:
 
 {json.dumps(raw_inputs, indent=2, default=str)}
 
-SPECIALIZED AGENT FINDINGS:
+SPECIALIZED AGENT FINDINGS WITH HISTORICAL TRUST WEIGHTS:
 
-{json.dumps(agent_outputs, indent=2, default=str)}
+{json.dumps(weighted_agent_findings, indent=2, default=str)}
+
+TRUST WEIGHT RULES:
+
+- A trust weight of 1.0 represents neutral influence.
+- A trust weight below 1.0 means the agent has historically been less reliable based on engineer feedback.
+- A trust weight above 1.0 means the agent has historically been more reliable based on engineer feedback.
+- Use trust weights to adjust how strongly you rely on each agent's findings.
+- Do NOT ignore strong current evidence solely because an agent has a lower historical trust weight.
+- Do NOT treat historical trust weights as proof of the current incident's root cause.
+- Current incident evidence remains the primary basis for the RCA.
 
 Return ONLY valid JSON in this format:
 

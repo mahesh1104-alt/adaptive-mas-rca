@@ -16,6 +16,8 @@ from app.ollama_adapter import ollama_llm
 from app.trace_analysis_agent import TraceAnalysisAgent
 from app.trace_preprocessing import preprocess_trace
 from app.diagnosis_events import publish_event
+from app.agent_weighting import calculate_agent_trust_weights
+from app.dependencies import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -340,10 +342,20 @@ def build_graph(
             raw_inputs = state.get("raw_inputs", {})
             agent_outputs = state.get("agent_outputs", {})
 
+            db = SessionLocal()
+
+            try:
+                agent_weights = calculate_agent_trust_weights(db)
+            finally:
+                db.close()
+
+            state["agent_weights"] = agent_weights
+
             result = reasoning_agent.run(
                 {
                     "raw_inputs": raw_inputs,
                     "agent_outputs": agent_outputs,
+                    "agent_weights": agent_weights,
                 }
             )
 

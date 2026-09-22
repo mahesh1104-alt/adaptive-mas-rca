@@ -72,8 +72,9 @@ class AgentState(BaseModel):
 
     agent_outputs: dict[str, AgentOutput] = Field(default_factory=dict)
 
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    agent_weights: dict[str, float] = Field(default_factory=dict)
 
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     final_report: FinalReport | None = None
 
     def get_input(self, key: str, default: Any = None) -> Any:

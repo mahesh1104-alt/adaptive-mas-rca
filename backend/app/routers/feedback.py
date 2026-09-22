@@ -107,6 +107,14 @@ def submit_feedback(
     knowledge_base_updated = False
 
     if payload.is_correct is True:
+        # Mark the incident as resolved when an engineer
+        # confirms that the diagnosis is correct.
+        incident.status = "resolved"
+        incident.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(incident)
+
         root_cause = output.diagnosis
 
         if root_cause:
@@ -124,14 +132,14 @@ def submit_feedback(
                 "resolution": (
                     output.recommendation or ""
                 ),
+                "knowledge_source": "engineer_verified",
+                "resolution_confidence": 1.0,
             }
 
             try:
                 add_resolved_incident(kb_incident)
                 knowledge_base_updated = True
             except Exception:
-                # Feedback itself has already been persisted.
-                # KB failure must not erase the feedback record.
                 knowledge_base_updated = False
 
     return FeedbackResponse(

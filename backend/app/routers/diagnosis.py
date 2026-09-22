@@ -41,6 +41,7 @@ from app.diagnosis_events import (
     unsubscribe,
 )
 from app.graph import graph
+from app.storage import query_traces
 from app.models.diagnosis import (
     DiagnosisAcceptedResponse,
     DiagnosisJobResponse,
@@ -74,6 +75,46 @@ def _json_text(value: Any) -> str | None:
         ensure_ascii=False,
     )
 
+
+def _load_incident_traces(
+    incident: Incident,
+) -> list[dict[str, Any]]:
+    """
+    Load real Jaeger traces for the incident's source service.
+
+    The incident source is treated as the service name when querying
+    Jaeger. If no service is specified or Jaeger has no matching traces,
+    return an empty list rather than creating synthetic trace data.
+    """
+
+    service = (incident.source or "").strip()
+
+    if not service:
+        return []
+
+    try:
+        trace_result = query_traces(
+            service=service,
+            limit=20,
+        )
+
+        if not isinstance(trace_result, dict):
+            return []
+
+        traces = trace_result.get("data", [])
+
+        if not isinstance(traces, list):
+            return []
+
+        return [
+            {
+                "service": service,
+                "data": trace_result,
+            }
+        ]
+
+    except Exception:
+        return []
 
 def _build_raw_inputs(
     incident: Incident,
@@ -112,7 +153,8 @@ def _build_raw_inputs(
             },
         ],
     )
-    raw_inputs.setdefault("trace", [])
+    if not raw_inputs.get("trace"):
+        raw_inputs["trace"] = _load_incident_traces(incident)
     raw_inputs.setdefault("source_snippets", [])
     raw_inputs.setdefault("recent_commits", [])
 

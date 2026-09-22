@@ -137,6 +137,20 @@ def store_historical_incident(
         "resolution": str(
             incident.get("resolution", "")
         ),
+
+        "knowledge_source": str(
+            incident.get(
+                "knowledge_source",
+                ""
+            )
+        ),
+
+        "resolution_confidence": float(
+            incident.get(
+                "resolution_confidence",
+                0.0
+            )
+        ),
     }
 
     store_embedding(

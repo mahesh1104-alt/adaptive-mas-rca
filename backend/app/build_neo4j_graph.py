@@ -106,7 +106,10 @@ def store_incident(tx, incident):
             i.description = $description,
             i.severity = $severity,
             i.timestamp = $timestamp,
-            i.status = $status
+            i.status = $status,
+            i.resolution = $resolution,
+            i.knowledge_source = $knowledge_source,
+            i.resolution_confidence = $resolution_confidence
 
         MERGE (s:Service {service_id: $service_id})
         SET
@@ -122,7 +125,8 @@ def store_incident(tx, incident):
         SET
             r.description = root_cause_text,
             r.category = "historical",
-            r.confidence = 1.0
+            r.confidence = $resolution_confidence,
+            r.knowledge_source = $knowledge_source
 
         MERGE (r)-[:CAUSES]->(i)
         MERGE (i)-[:RESOLVED_BY]->(r)
@@ -138,6 +142,21 @@ def store_incident(tx, incident):
         service_description=f"Service involved in incident {incident_id}",
         root_cause_id=f"root-cause:{root_cause}",
         root_cause=root_cause,
+        resolution=str(
+            incident.get("resolution") or ""
+        ),
+        knowledge_source=str(
+            incident.get(
+                "knowledge_source",
+                ""
+            )
+        ),
+        resolution_confidence=float(
+            incident.get(
+                "resolution_confidence",
+                0.0
+            )
+        ),
     )
 
 
