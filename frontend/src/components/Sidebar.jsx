@@ -1,10 +1,16 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 
 function Sidebar() {
+  const location = useLocation()
+
   const links = [
     { to: '/dashboard', label: 'Dashboard' },
     { to: '/incidents', label: 'Incidents' },
     { to: '/feedback', label: 'Feedback' },
+    {
+      to: '/feedback/analytics',
+      label: 'Feedback Analytics',
+    },
   ]
 
   return (
@@ -18,22 +24,22 @@ function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
-        {links.map((link) => (
-          <NavLink
-            key={link.to}
-            to={link.to}
-            className={({ isActive }) =>
-              `nav-link ${isActive ? 'active' : ''}`
-            }
-          >
-            {link.label}
-          </NavLink>
-        ))}
+        {links.map((link) => {
+          const isActive = location.pathname === link.to
+
+          return (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              className={`nav-link ${isActive ? 'active' : ''}`}
+            >
+              {link.label}
+            </NavLink>
+          )
+        })}
       </nav>
     </aside>
   )
 }
 
 export default Sidebar
-
-

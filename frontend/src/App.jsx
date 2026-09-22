@@ -3,6 +3,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import DashboardLayout from './layouts/DashboardLayout'
 import Dashboard from './pages/Dashboard'
 import Feedback from './pages/Feedback'
+import FeedbackAnalytics from './pages/FeedbackAnalytics'
 import IncidentDetail from './pages/IncidentDetail'
 import Incidents from './pages/Incidents'
 import Login from './pages/Login'
@@ -22,6 +23,10 @@ function App() {
             element={<IncidentDetail />}
           />
           <Route path="/feedback" element={<Feedback />} />
+          <Route
+            path="/feedback/analytics"
+            element={<FeedbackAnalytics />}
+          />
         </Route>
       </Route>
 
@@ -32,5 +37,3 @@ function App() {
 }
 
 export default App
-
-

@@ -1085,3 +1085,125 @@ textarea:focus-visible {
     width: 100%;
   }
 }
+/* Feedback Analytics */
+.analytics-period-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analytics-period-control label {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.analytics-period-control select {
+  min-width: 100px;
+  padding: 7px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+}
+
+.analytics-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.analytics-summary-card {
+  padding: 20px;
+}
+
+.analytics-summary-card span {
+  display: block;
+  margin-bottom: 8px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.analytics-summary-card strong {
+  display: block;
+  color: #111827;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.analytics-chart-card {
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+.analytics-card-heading {
+  margin-bottom: 8px;
+}
+
+.analytics-card-heading h3 {
+  margin: 0 0 6px;
+}
+
+.analytics-card-heading p {
+  margin: 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.analytics-chart {
+  margin-top: 12px;
+}
+
+.analytics-breakdown-card {
+  padding: 20px;
+}
+
+.analytics-breakdown-card h3 {
+  margin: 0 0 16px;
+}
+
+.analytics-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.analytics-breakdown-grid > div {
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+
+.analytics-breakdown-grid span {
+  display: block;
+  margin-bottom: 6px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.analytics-breakdown-grid strong {
+  font-size: 22px;
+  color: #111827;
+}
+
+@media (max-width: 900px) {
+  .analytics-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 650px) {
+  .analytics-summary-grid,
+  .analytics-breakdown-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-period-control {
+    width: 100%;
+  }
+
+  .analytics-period-control select {
+    flex: 1;
+  }
+}
