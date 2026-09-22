@@ -11,6 +11,11 @@ from app.dependencies import (
 from app.db.models import User, AgentOutput, Incident, Feedback
 from app.models.feedback import FeedbackCreate, FeedbackResponse
 from app.knowledge_base_updater import add_resolved_incident
+from app.feedback_analytics import (
+    get_feedback_accuracy,
+    get_mttr_trend,
+    clear_analytics_cache,
+)
 
 
 router = APIRouter(
@@ -26,6 +31,39 @@ def feedback_status():
         "message": "Feedback router is working",
     }
 
+@router.get("/analytics/accuracy")
+def feedback_accuracy_analytics(
+    period: str = "daily",
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_engineer),
+):
+    if period not in {"daily", "weekly"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="period must be 'daily' or 'weekly'",
+        )
+
+    return get_feedback_accuracy(
+        db=db,
+        period=period,
+    )
+
+@router.get("/analytics/mttr")
+def feedback_mttr_analytics(
+    period: str = "daily",
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_engineer),
+):
+    if period not in {"daily", "weekly"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="period must be 'daily' or 'weekly'",
+        )
+
+    return get_mttr_trend(
+        db=db,
+        period=period,
+    )
 
 @router.post(
     "/",
@@ -141,6 +179,10 @@ def submit_feedback(
                 knowledge_base_updated = True
             except Exception:
                 knowledge_base_updated = False
+
+    # Invalidate cached analytics because new feedback
+    # may change accuracy and MTTR trends.
+    clear_analytics_cache()
 
     return FeedbackResponse(
         status="success",

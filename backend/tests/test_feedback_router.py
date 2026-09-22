@@ -1,5 +1,8 @@
 import uuid
 
+from datetime import datetime
+
+from app.db.models import Feedback
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -258,3 +261,292 @@ def test_feedback_invalid_rating():
 
     finally:
         cleanup_test_data(ids)
+
+def create_analytics_test_data():
+    db = SessionLocal()
+
+    user = User(
+        user_id=uuid.uuid4(),
+        username=f"analytics_test_{uuid.uuid4().hex[:8]}",
+        email=f"analytics_{uuid.uuid4().hex[:8]}@example.com",
+        role="engineer",
+    )
+
+    db.add(user)
+    db.flush()
+
+    incident_ids = []
+    output_ids = []
+
+    # Create 3 feedback records:
+    # 2 correct + 1 incorrect
+    for is_correct in [True, True, False]:
+        incident = Incident(
+            incident_id=uuid.uuid4(),
+            user_id=user.user_id,
+            title="Analytics Feedback Incident",
+            description="Analytics test incident.",
+            severity="medium",
+            status="open",
+            source="analytics-test",
+            created_at=datetime(2026, 9, 22, 10, 0, 0),
+            updated_at=datetime(2026, 9, 22, 10, 30, 0),
+        )
+
+        output = AgentOutput(
+            output_id=uuid.uuid4(),
+            incident_id=incident.incident_id,
+            agent_name="reasoning_agent",
+            agent_type="reasoning",
+            diagnosis="Test diagnosis",
+            recommendation="Test recommendation",
+            reasoning="Test reasoning",
+            created_at=datetime(2026, 9, 22, 10, 5, 0),
+        )
+
+        feedback = Feedback(
+            feedback_id=uuid.uuid4(),
+            user_id=user.user_id,
+            output_id=output.output_id,
+            rating=5 if is_correct else 1,
+            comments="Analytics test feedback",
+            is_correct=is_correct,
+            created_at=datetime(2026, 9, 22, 11, 0, 0),
+        )
+
+        db.add(incident)
+        db.add(output)
+        db.add(feedback)
+
+        incident_ids.append(incident.incident_id)
+        output_ids.append(output.output_id)
+
+    # Create one resolved incident for MTTR.
+    resolved_incident = Incident(
+        incident_id=uuid.uuid4(),
+        user_id=user.user_id,
+        title="Analytics MTTR Incident",
+        description="MTTR test incident.",
+        severity="high",
+        status="resolved",
+        source="analytics-test",
+        created_at=datetime(2026, 9, 22, 12, 0, 0),
+        updated_at=datetime(2026, 9, 22, 13, 30, 0),
+    )
+
+    db.add(resolved_incident)
+    db.commit()
+
+    ids = {
+        "user_id": str(user.user_id),
+        "incident_ids": [str(value) for value in incident_ids]
+        + [str(resolved_incident.incident_id)],
+        "output_ids": [str(value) for value in output_ids],
+    }
+
+    db.close()
+
+    return ids
+
+def cleanup_analytics_test_data(ids):
+    db = SessionLocal()
+
+    output_ids = [
+        uuid.UUID(value)
+        for value in ids["output_ids"]
+    ]
+
+    incident_ids = [
+        uuid.UUID(value)
+        for value in ids["incident_ids"]
+    ]
+
+    # Delete feedback first.
+    feedback_rows = (
+        db.query(Feedback)
+        .filter(Feedback.output_id.in_(output_ids))
+        .all()
+    )
+
+    for feedback in feedback_rows:
+        db.delete(feedback)
+
+    # Delete agent outputs.
+    outputs = (
+        db.query(AgentOutput)
+        .filter(AgentOutput.output_id.in_(output_ids))
+        .all()
+    )
+
+    for output in outputs:
+        db.delete(output)
+
+    # Delete incidents.
+    incidents = (
+        db.query(Incident)
+        .filter(Incident.incident_id.in_(incident_ids))
+        .all()
+    )
+
+    for incident in incidents:
+        db.delete(incident)
+
+    # Delete test user.
+    user = db.get(
+        User,
+        uuid.UUID(ids["user_id"]),
+    )
+
+    if user:
+        db.delete(user)
+
+    db.commit()
+    db.close()
+
+def test_feedback_accuracy_daily_analytics():
+    ids = create_analytics_test_data()
+
+    try:
+        from app.feedback_analytics import clear_analytics_cache
+
+        clear_analytics_cache()
+
+        response = client.get(
+            "/api/feedback/analytics/accuracy?period=daily",
+            headers=engineer_headers(ids["user_id"]),
+        )
+
+        assert response.status_code == 200
+
+        body = response.json()
+
+        assert body["period"] == "daily"
+
+        row = next(
+            item
+            for item in body["data"]
+            if item["period"] == "2026-09-22"
+        )
+
+        assert row["total_feedback"] >= 3
+        assert row["correct_feedback"] >= 2
+        assert row["incorrect_feedback"] >= 1
+        assert row["accuracy"] > 0
+
+    finally:
+        cleanup_analytics_test_data(ids)
+
+
+def test_feedback_accuracy_weekly_analytics():
+    ids = create_analytics_test_data()
+
+    try:
+        from app.feedback_analytics import clear_analytics_cache
+
+        clear_analytics_cache()
+
+        response = client.get(
+            "/api/feedback/analytics/accuracy?period=weekly",
+            headers=engineer_headers(ids["user_id"]),
+        )
+
+        assert response.status_code == 200
+
+        body = response.json()
+
+        assert body["period"] == "weekly"
+
+        row = next(
+            item
+            for item in body["data"]
+            if item["period"] == "2026-W39"
+        )
+
+        assert row["total_feedback"] >= 3
+        assert row["correct_feedback"] >= 2
+        assert row["incorrect_feedback"] >= 1
+
+    finally:
+        cleanup_analytics_test_data(ids)
+
+def test_feedback_mttr_daily_analytics():
+    ids = create_analytics_test_data()
+
+    try:
+        from app.feedback_analytics import clear_analytics_cache
+
+        clear_analytics_cache()
+
+        response = client.get(
+            "/api/feedback/analytics/mttr?period=daily",
+            headers=engineer_headers(ids["user_id"]),
+        )
+
+        assert response.status_code == 200
+
+        body = response.json()
+
+        assert body["period"] == "daily"
+
+        row = next(
+            item
+            for item in body["data"]
+            if item["period"] == "2026-09-22"
+        )
+
+        assert row["resolved_incidents"] >= 1
+        assert row["mttr_seconds"] > 0
+        assert row["mttr_minutes"] > 0
+
+    finally:
+        cleanup_analytics_test_data(ids)
+
+
+def test_feedback_mttr_weekly_analytics():
+    ids = create_analytics_test_data()
+
+    try:
+        from app.feedback_analytics import clear_analytics_cache
+
+        clear_analytics_cache()
+
+        response = client.get(
+            "/api/feedback/analytics/mttr?period=weekly",
+            headers=engineer_headers(ids["user_id"]),
+        )
+
+        assert response.status_code == 200
+
+        body = response.json()
+
+        assert body["period"] == "weekly"
+
+        row = next(
+            item
+            for item in body["data"]
+            if item["period"] == "2026-W39"
+        )
+
+        assert row["resolved_incidents"] >= 1
+        assert row["mttr_seconds"] > 0
+        assert row["mttr_minutes"] > 0
+
+    finally:
+        cleanup_analytics_test_data(ids)
+
+def test_feedback_analytics_invalid_period():
+    ids = create_analytics_test_data()
+
+    try:
+        response = client.get(
+            "/api/feedback/analytics/accuracy?period=monthly",
+            headers=engineer_headers(ids["user_id"]),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "period must be 'daily' or 'weekly'"
+        )
+
+    finally:
+        cleanup_analytics_test_data(ids)
