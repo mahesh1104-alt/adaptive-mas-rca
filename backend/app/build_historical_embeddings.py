@@ -74,18 +74,15 @@ def get_all_historical_incidents() -> list[dict]:
         query = """
             SELECT
                 incident_id,
-                alert_name,
-                service,
+                title,
+                description,
                 severity,
                 status,
-                started_at,
-                resolved_at,
-                summary,
-                description,
-                root_cause,
-                resolution
+                source,
+                created_at,
+                updated_at
             FROM incidents
-            ORDER BY started_at ASC
+            ORDER BY created_at ASC
         """
 
         cursor.execute(query)

@@ -90,3 +90,4 @@ alembic==1.20.0
 bcrypt
 PyJWT
 email-validator
+APScheduler==3.11.0

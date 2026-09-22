@@ -107,44 +107,47 @@ def store_historical_incident(
 
     metadata = {
         "alert_name": str(
-            incident.get("alert_name", "")
+            incident.get(
+                "alert_name",
+                incident.get("title", "")
+            )
         ),
-
         "service": str(
-            incident.get("service", "")
+            incident.get(
+                "service",
+                incident.get("source", "")
+            )
         ),
-
         "severity": str(
             incident.get("severity", "")
         ),
-
         "status": str(
             incident.get("status", "")
         ),
-
         "started_at": str(
-            incident.get("started_at", "")
+            incident.get(
+                "started_at",
+               incident.get("created_at", "")
+            )
         ),
-
         "resolved_at": str(
-            incident.get("resolved_at", "")
+            incident.get(
+                "resolved_at",
+                incident.get("updated_at", "")
+            )
         ),
-
         "root_cause": str(
             incident.get("root_cause", "")
         ),
-
         "resolution": str(
             incident.get("resolution", "")
         ),
-
         "knowledge_source": str(
             incident.get(
                 "knowledge_source",
                 ""
             )
         ),
-
         "resolution_confidence": float(
             incident.get(
                 "resolution_confidence",
@@ -200,6 +203,20 @@ def get_collection_count() -> int:
     """
 
     return collection.count()
+
+def get_stored_incident_ids() -> set[str]:
+    """
+    Return all incident IDs currently stored in ChromaDB.
+    """
+
+    result = collection.get(
+        include=[]
+    )
+
+    return set(
+        str(incident_id)
+        for incident_id in result.get("ids", [])
+    )
 
 def delete_embeddings(incident_ids: list[str]) -> None:
     """

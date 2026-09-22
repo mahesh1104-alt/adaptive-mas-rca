@@ -333,28 +333,18 @@ def historical_incident_to_text(
             "incident must be a dictionary"
         )
 
-    incident_id = incident.get(
-        "incident_id",
-        "UNKNOWN"
-    )
-
-    alert_name = incident.get(
-        "alert_name",
+    title = incident.get(
+        "title",
         ""
     )
 
-    service = incident.get(
-        "service",
+    source = incident.get(
+        "source",
         ""
     )
 
     severity = incident.get(
         "severity",
-        ""
-    )
-
-    summary = incident.get(
-        "summary",
         ""
     )
 
@@ -364,10 +354,9 @@ def historical_incident_to_text(
     )
 
     text_parts = [
-        f"ALERT: {alert_name}",
-        f"SERVICE: {service}",
+        f"ALERT: {title}",
+        f"SERVICE: {source}",
         f"SEVERITY: {severity}",
-        f"SUMMARY: {summary}",
         f"DESCRIPTION: {description}",
     ]
 

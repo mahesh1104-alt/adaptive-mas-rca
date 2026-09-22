@@ -31,6 +31,10 @@ from app.routers import feedback
 from app.routers import auth
 from app.routers import dashboard
 from app.exceptions import general_exception_handler
+from app.embedding_scheduler import (
+    start_embedding_scheduler,
+    stop_embedding_scheduler,
+)
 
 repository_connector = RepositoryConnector()
 
@@ -580,8 +584,13 @@ def initialize_database():
 
 @app.on_event("startup")
 def startup_event():
-
     initialize_database()
+    start_embedding_scheduler()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    stop_embedding_scheduler()
 
 
 # ============================================================
